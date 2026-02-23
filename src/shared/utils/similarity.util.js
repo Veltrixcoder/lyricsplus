@@ -1,4 +1,6 @@
 // utils/similarityUtils.js
+import { transliterate as tr } from 'transliteration';
+
 export class SimilarityUtils {
 
     static normalizeString(str) {
@@ -128,71 +130,131 @@ export class SimilarityUtils {
     }
 
     static calculateTitleSimilarity(title1, title2) {
-        if (!title1 || !title2) return 0;
+        // Internal helper to run the logic
+        const computeScore = (t1, t2) => {
+            if (!t1 || !t2) return 0;
+            const analysis1 = this.analyzeTitle(t1);
+            const analysis2 = this.analyzeTitle(t2);
 
-        const analysis1 = this.analyzeTitle(title1);
-        const analysis2 = this.analyzeTitle(title2);
+            if (analysis1.baseTitle === analysis2.baseTitle && analysis1.baseTitle.length > 0) {
+                const conflictingTags = [...analysis1.tags].some(tag =>
+                    analysis2.tags.size > 0 && !analysis2.tags.has(tag) &&
+                    ['live', 'acoustic', 'remix', 'instrumental'].includes(tag)
+                );
+                return conflictingTags ? 0.85 : 1.0;
+            }
 
-        if (analysis1.baseTitle === analysis2.baseTitle && analysis1.baseTitle.length > 0) {
-            const conflictingTags = [...analysis1.tags].some(tag =>
-                analysis2.tags.size > 0 && !analysis2.tags.has(tag) &&
-                ['live', 'acoustic', 'remix', 'instrumental'].includes(tag)
-            );
+            const diceScore = this.getDiceCoefficient(analysis1.baseTitle, analysis2.baseTitle);
+            const maxLength = Math.max(analysis1.baseTitle.length, analysis2.baseTitle.length);
+            const levenshteinScore = maxLength > 0 ?
+                1 - (this.levenshteinDistance(analysis1.baseTitle, analysis2.baseTitle) / maxLength) : 0;
 
-            return conflictingTags ? 0.85 : 1.0;
-        }
+            let baseSimilarity = (diceScore * 0.7) + (levenshteinScore * 0.3);
 
-        const diceScore = this.getDiceCoefficient(analysis1.baseTitle, analysis2.baseTitle);
-        const maxLength = Math.max(analysis1.baseTitle.length, analysis2.baseTitle.length);
-        const levenshteinScore = maxLength > 0 ?
-            1 - (this.levenshteinDistance(analysis1.baseTitle, analysis2.baseTitle) / maxLength) : 0;
+            const criticalTags = ['live', 'acoustic', 'remix', 'instrumental', 'karaoke'];
+            const tags1Critical = [...analysis1.tags].filter(t => criticalTags.includes(t));
+            const tags2Critical = [...analysis2.tags].filter(t => criticalTags.includes(t));
 
-        let baseSimilarity = (diceScore * 0.7) + (levenshteinScore * 0.3);
+            let tagPenalty = 0;
+            if (tags1Critical.length > 0 && tags2Critical.length > 0) {
+                const hasConflict = !tags1Critical.some(t => tags2Critical.includes(t));
+                if (hasConflict) tagPenalty = 0.4;
+            } else if (tags1Critical.length > 0 || tags2Critical.length > 0) {
+                tagPenalty = 0.15;
+            }
 
-        const criticalTags = ['live', 'acoustic', 'remix', 'instrumental', 'karaoke'];
-        const tags1Critical = [...analysis1.tags].filter(t => criticalTags.includes(t));
-        const tags2Critical = [...analysis2.tags].filter(t => criticalTags.includes(t));
+            return Math.max(0, baseSimilarity - tagPenalty);
+        };
 
-        let tagPenalty = 0;
-        if (tags1Critical.length > 0 && tags2Critical.length > 0) {
-            const hasConflict = !tags1Critical.some(t => tags2Critical.includes(t));
-            if (hasConflict) tagPenalty = 0.4;
-        } else if (tags1Critical.length > 0 || tags2Critical.length > 0) {
-            tagPenalty = 0.15;
-        }
-
-        return Math.max(0, baseSimilarity - tagPenalty);
+        // Return the max of Original vs Original AND Romanized vs Romanized
+        return Math.max(
+            computeScore(title1, title2),
+            computeScore(tr(title1), tr(title2))
+        );
     }
 
     static calculateArtistSimilarity(artist1, artist2, title1Analysis = null, title2Analysis = null) {
-        if (!artist1 || !artist2) return 0;
+        const computeScore = (a1, a2, feats1, feats2) => {
+            if (!a1 || !a2) return 0;
 
-        const norm1 = this.normalizeArtistName(artist1);
-        const norm2 = this.normalizeArtistName(artist2);
+            const norm1 = this.normalizeArtistName(a1);
+            const norm2 = this.normalizeArtistName(a2);
 
-        if (norm1 === norm2) return 1.0;
+            if (norm1 === norm2) return 1.0;
 
-        const allArtists1 = new Set([norm1]);
-        const allArtists2 = new Set([norm2]);
+            const allArtists1 = new Set();
+            const allArtists2 = new Set();
 
-        if (title1Analysis?.featArtists) {
-            title1Analysis.featArtists.forEach(feat => {
-                allArtists1.add(this.normalizeArtistName(feat));
+            a1.split(/\s*[,&]\s*/).forEach(a => {
+                const normalized = this.normalizeArtistName(a);
+                if (normalized) allArtists1.add(normalized);
             });
-        }
 
-        if (title2Analysis?.featArtists) {
-            title2Analysis.featArtists.forEach(feat => {
-                allArtists2.add(this.normalizeArtistName(feat));
+            a2.split(/\s*[,&]\s*/).forEach(a => {
+                const normalized = this.normalizeArtistName(a);
+                if (normalized) allArtists2.add(normalized);
             });
-        }
 
-        const hasOverlap = [...allArtists1].some(a1 => [...allArtists2].some(a2 => a1 === a2));
-        if (hasOverlap) return 0.9;
+            if (feats1) feats1.forEach(f => {
+                const normalized = this.normalizeArtistName(f);
+                if (normalized) allArtists1.add(normalized);
+            });
 
-        return this.getDiceCoefficient(norm1, norm2);
+            if (feats2) feats2.forEach(f => {
+                const normalized = this.normalizeArtistName(f);
+                if (normalized) allArtists2.add(normalized);
+            });
+
+            const artists1Array = [...allArtists1];
+            const artists2Array = [...allArtists2];
+
+            const overlap1to2 = artists1Array.filter(name1 => artists2Array.includes(name1)).length;
+            const overlap2to1 = artists2Array.filter(name2 => artists1Array.includes(name2)).length;
+
+            const minSize = Math.min(artists1Array.length, artists2Array.length);
+            const maxOverlap = Math.max(overlap1to2, overlap2to1);
+
+            if (minSize > 0 && maxOverlap === minSize) return 1.0;
+
+            if (maxOverlap > 0) {
+                return 0.7 + (0.3 * maxOverlap / Math.max(artists1Array.length, artists2Array.length));
+            }
+
+            return this.getDiceCoefficient(norm1, norm2);
+        };
+
+        const scoreOriginal = computeScore(
+            artist1,
+            artist2,
+            title1Analysis?.featArtists,
+            title2Analysis?.featArtists
+        );
+
+        const scoreRomanized = computeScore(
+            tr(artist1),
+            tr(artist2),
+            title1Analysis?.featArtists?.map(f => tr(f)),
+            title2Analysis?.featArtists?.map(f => tr(f))
+        );
+
+        return Math.max(scoreOriginal, scoreRomanized);
     }
 
+    static calculateAlbumSimilarity(album1, album2) {
+        if (!album1 || !album2) return 0.1;
+
+        const computeScore = (a1, a2) => {
+            const norm1 = this.normalizeString(a1);
+            const norm2 = this.normalizeString(a2);
+            if (norm1 === norm2) return 1.0;
+            return this.getDiceCoefficient(norm1, norm2);
+        };
+
+        return Math.max(
+            computeScore(album1, album2),
+            computeScore(tr(album1), tr(album2))
+        );
+    }
     static calculateDurationSimilarity(duration1, duration2) {
         if (duration1 === undefined || duration2 === undefined ||
             duration1 === null || duration2 === null) {
@@ -363,6 +425,7 @@ export class SimilarityUtils {
 
         if (bestMatch.scoreInfo.score < confidenceThreshold) {
             console.debug(`❌ No match: score ${bestMatch.scoreInfo.score.toFixed(3)} < ${confidenceThreshold}`);
+            console.log(bestMatch)
             return null;
         }
 

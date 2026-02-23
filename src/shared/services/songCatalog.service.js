@@ -16,16 +16,20 @@ export class SongCatalogService {
      * @returns {Promise<Array<object>>} A promise that resolves to an array of normalized song metadata.
      */
     static async search(query, env) {
-        const [appleMusicResult, spotifyResult, musixmatchResult] = await Promise.allSettled([
+        const results = await Promise.allSettled([
             this._searchAppleMusic(query),
             this._searchSpotify(query),
             this._searchMusixmatch(query, env)
         ]);
 
-        const allResults = [];
-        if (appleMusicResult.status === 'fulfilled') allResults.push(...appleMusicResult.value);
-        if (spotifyResult.status === 'fulfilled') allResults.push(...spotifyResult.value);
-        if (musixmatchResult.status === 'fulfilled') allResults.push(...musixmatchResult.value);
+        const allResults = results.flatMap(result => {
+            if (result.status === 'fulfilled') {
+                return result.value;
+            } else {
+                console.error("A search service failed:", result.reason);
+                return [];
+            }
+        });
 
         return this._mergeSearchResults(allResults);
     }
@@ -73,7 +77,7 @@ export class SongCatalogService {
         try {
             const dev_token = await AppleMusicService.getAppleMusicAuth();
             const storefront = await AppleMusicService.getStorefront();
-            const searchData = await AppleMusicService.searchSong(query, dev_token, storefront);
+            const searchData = await AppleMusicService.searchSong(query, storefront);
             const songsData = searchData.results?.songs?.data || [];
             
             return Promise.all(

@@ -278,8 +278,8 @@ export class SpotifyService {
                     Object.assign(CACHE, { clientId: null, accessToken: null, spotifyToken: null, tokenExpiry: null });
                     return this.makeSpotifyRequest(url, options, retries + 1);
                 }
-                const errorText = await response.text();
-                throw new Error(`Spotify API returned status ${response.status}: ${errorText}`);
+                const errorText = await response.json();
+                throw new Error(`Spotify API returned status ${response.status}: ${errorText.error.message || ""}`);
             }
             return response;
         } catch (error) {
@@ -319,8 +319,8 @@ export class SpotifyService {
             }
 
             if (!response.ok) {
-                const errorText = await response.text();
-                throw new Error(`Failed to get Spotify web token after retries. Status: ${response.status}, Body: ${errorText}`);
+                const errorText = await response.json();
+                throw new Error(`Failed to get Spotify web token after retries. Status: ${response.status}, Body: ${errorText.error.message || ""}`);
             }
 
             const data = await response.json();

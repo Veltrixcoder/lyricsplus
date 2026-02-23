@@ -68,27 +68,7 @@ async function saveBestLyrics(source, fileName, rawData, convertedData, gd, song
                     GDRIVE.CACHED_TTML
                 );
             }
-            const newSong = {
-                id: convertedData.metadata.appleMusicId, 
-                artist: songArtist,
-                track_name: songTitle,
-                album: songAlbum,
-                ttmlFileId: fileId,
-                source: 'Apple',
-            };
 
-            const songIndex = songs.findIndex(
-                s => s && s.track_name?.toLowerCase() === songTitle?.toLowerCase() &&
-                    s.artist?.toLowerCase() === songArtist?.toLowerCase() &&
-                    (!songAlbum || s.album?.toLowerCase() === songAlbum?.toLowerCase())
-            );
-
-            if (songIndex !== -1) {
-                songs[songIndex] = newSong;
-            } else {
-                songs.push(newSong);
-            }
-            await env.SONGS_KV.put('songList', JSON.stringify(songs));
         } else if (source === 'musixmatch') {
             const existingFile = await FileUtils.findExistingFile(
                 gd,
@@ -166,83 +146,62 @@ export async function handleSongLyrics(
         sources = preferredSources.length > 0 ? preferredSources : ['apple', 'lyricsplus', 'musixmatch-word', 'musixmatch', 'spotify'];
     }
     
-    const promises = [];
-    sources.forEach(source => {
-        let promise;
+    const getSyncPriority = (result) => {
+        if (!result || !result.data) return 0;
+
+        const sourceType = result.source ? result.source.toLowerCase() : '';
+        const data = result.data;
+        const syncType = data.type ? data.type.toUpperCase() : '';
+
+        if (sourceType.includes('musixmatch') || sourceType.includes('spotify')) {
+            if (syncType === 'WORD' || syncType === 'SYLLABLE') return 3;
+            if (syncType === 'LINE') return 2;
+            return 1;
+        }
+
+        if (sourceType.includes('apple') || sourceType.includes('lyricsplus')) {
+            return FileUtils.hasSyllableSync(data) ? 3 : syncType == 'LINE' ? 2 : 1;
+        }
+    };
+
+    const fetchSource = (source) => {
         switch (source) {
             case 'apple':
-                console.debug('Queueing AppleMusic Fetch');
-                promise = AppleMusicService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, songs, gd, forceReload, sources);
-                break;
+                console.debug(`Attempting AppleMusic Fetch`);
+                return AppleMusicService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, songs, gd, forceReload, sources);
             case 'lyricsplus':
-                console.debug('Queueing LyricsPlus Fetch');
-                promise = LyricsPlusService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd);
-                break;
+                console.debug(`Attempting LyricsPlus Fetch`);
+                return LyricsPlusService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd);
             case 'musixmatch-word':
-                console.debug('Queueing MusixMatch (Word Sync) Fetch');
-                promise = MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, true);
-                break;
+                console.debug(`Attempting MusixMatch (Word Sync) Fetch`);
+                return MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, true);
             case 'musixmatch':
-                console.debug('Queueing MusixMatch (Line/Any Sync) Fetch');
-                promise = MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, false);
-                break;
+                console.debug(`Attempting MusixMatch (Line/Any Sync) Fetch`);
+                return MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, false);
             case 'spotify':
-                console.debug('Queueing Spotify (as MusixMatch alt) Fetch');
-                promise = SpotifyService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload);
-                break;
+                console.debug(`Attempting Spotify (as MusixMatch alt) Fetch`);
+                return SpotifyService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload);
+            default:
+                return Promise.resolve(null);
         }
-        if (promise) {
-            promises.push(promise.catch(e => {
-                console.error(`Error fetching from ${source}:`, e);
-                return null;
-            }));
-        }
-    });
+    };
 
-    const results = await Promise.all(promises);
-    const successfulResults = results.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0);
-
-    if (successfulResults.length > 0) {
-        const getSyncPriority = (result) => {
-            if (!result || !result.data) return 0;
-
-            const sourceType = result.source ? result.source.toLowerCase() : '';
-            const data = result.data;
-
-            if (sourceType.includes('musixmatch') || sourceType.includes('spotify')) {
-                const syncType = data.type ? data.type.toUpperCase() : '';
-                if (syncType === 'WORD' || syncType === 'SYLLABLE') return 3;
-                if (syncType === 'LINE') return 2;
-                return 1;
-            }
-
-            if (sourceType.includes('apple') || sourceType.includes('lyricsplus')) {
-                return FileUtils.hasSyllableSync(data) ? 3 : 2;
-            }
-
-        };
-
-        const bestResult = successfulResults.reduce((best, current) => {
-            const bestPriority = getSyncPriority(best);
-            const currentPriority = getSyncPriority(current);
-            return currentPriority > bestPriority ? current : best;
-        });
-
-        const exactSongTitle = bestResult.exactMetadata?.title || bestResult.data.metadata.title || songTitle;
-        const exactSongArtist = bestResult.exactMetadata?.artist || bestResult.data.metadata.artist || songArtist;
-        const exactSongAlbum = bestResult.exactMetadata?.album || bestResult.data.metadata.album || songAlbum;
-        const exactSongDuration = bestResult.exactMetadata?.durationMs ? bestResult.exactMetadata.durationMs / 1000 : (bestResult.data.metadata.durationMs ? bestResult.data.metadata.durationMs / 1000 : songDuration);
-        const exactSongISRC = bestResult.exactMetadata?.isrc || bestResult.data.metadata.isrc || songISRC;
-        const exactSongPlatformId = bestResult.exactMetadata?.platformId || bestResult.data.metadata.platformId || songPlatformId;
+    const saveResult = async (result) => {
+        const exactSongTitle = result.exactMetadata?.title || result.data.metadata.title || songTitle;
+        const exactSongArtist = result.exactMetadata?.artist || result.data.metadata.artist || songArtist;
+        const exactSongAlbum = result.exactMetadata?.album || result.data.metadata.album || songAlbum;
+        const exactSongDuration = result.exactMetadata?.durationMs ? result.exactMetadata.durationMs / 1000 : (result.data.metadata.durationMs ? result.data.metadata.durationMs / 1000 : songDuration);
+        const exactSongISRC = result.exactMetadata?.isrc || result.data.metadata.isrc || songISRC;
+        const exactSongPlatformId = result.exactMetadata?.platformId || result.data.metadata.platformId || songPlatformId;
 
         const finalFileName = await FileUtils.generateUniqueFileName(exactSongTitle, exactSongArtist, exactSongAlbum, exactSongDuration, exactSongISRC, exactSongPlatformId);
 
-        if (bestResult.rawData && bestResult.data.cached !== 'GDrive' && bestResult.data.cached !== 'Database') {
+        if (result.rawData && result.data.cached !== 'GDrive' && result.data.cached !== 'Database') {
             saveBestLyrics(
-                bestResult.source.toLowerCase().replace('-word', ''),
+                result.source.toLowerCase().replace('-word', ''),
                 finalFileName, 
-                bestResult.rawData,
-                bestResult.data,
+                result.rawData,
+                result.data,
                 gd,
                 exactSongTitle, 
                 exactSongArtist,
@@ -254,7 +213,87 @@ export async function handleSongLyrics(
                 env
             );
         }
+    };
 
+    const firstTwoSources = sources.slice(0, 2);
+    const firstTwoPromises = firstTwoSources.map(source => fetchSource(source));
+
+    const firstTwoResults = await Promise.all(firstTwoPromises.map(p => p.catch(e => {
+        console.error(`Error fetching from one of the first two sources:`, e);
+        return null;
+    })));
+
+    const successfulFirstTwoResults = firstTwoResults.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0);
+
+    if (successfulFirstTwoResults.length > 0) {
+        const bestFirstTwo = successfulFirstTwoResults.reduce((best, current) => {
+            const bestPriority = getSyncPriority(best);
+            const currentPriority = getSyncPriority(current);
+            return currentPriority > bestPriority ? current : best;
+        });
+
+        const bestPriority = getSyncPriority(bestFirstTwo);
+
+        if (bestPriority === 3) {
+            console.debug(`Found word/syllable sync lyrics from first two sources: ${bestFirstTwo.source}`);
+            await saveResult(bestFirstTwo);
+            return bestFirstTwo;
+        }
+
+        if (bestPriority === 2) {
+            console.debug(`Found line sync lyrics from first two sources, checking for word sync in remaining sources`);
+            
+            const remainingSources = sources.slice(2).filter(s => s !== 'musixmatch' && s !== 'spotify');
+            
+            if (remainingSources.length > 0) {
+                const remainingPromises = remainingSources.map(source => fetchSource(source));
+                const remainingResults = await Promise.all(remainingPromises.map(p => p.catch(e => {
+                    console.error(`Error fetching from remaining source:`, e);
+                    return null;
+                })));
+
+                const successfulRemainingResults = remainingResults.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0);
+
+                if (successfulRemainingResults.length > 0) {
+                    const bestRemaining = successfulRemainingResults.reduce((best, current) => {
+                        const bestPriority = getSyncPriority(best);
+                        const currentPriority = getSyncPriority(current);
+                        return currentPriority > bestPriority ? current : best;
+                    });
+
+                    if (getSyncPriority(bestRemaining) === 3) {
+                        console.debug(`Found word sync from remaining sources: ${bestRemaining.source}`);
+                        await saveResult(bestRemaining);
+                        return bestRemaining;
+                    }
+                }
+            }
+
+            console.debug(`Using line sync result from first two sources: ${bestFirstTwo.source}`);
+            await saveResult(bestFirstTwo);
+            return bestFirstTwo;
+        }
+    }
+
+    console.debug('No suitable lyrics from first two sources or priority <= 1, fetching all remaining sources');
+    const remainingSources = sources.slice(2);
+    const promises = remainingSources.map(source => fetchSource(source));
+
+    const results = await Promise.all(promises.map(p => p.catch(e => {
+        console.error(`Error fetching from remaining source:`, e);
+        return null;
+    })));
+
+    const allSuccessfulResults = [...successfulFirstTwoResults, ...results.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0)];
+
+    if (allSuccessfulResults.length > 0) {
+        const bestResult = allSuccessfulResults.reduce((best, current) => {
+            const bestPriority = getSyncPriority(best);
+            const currentPriority = getSyncPriority(current);
+            return currentPriority > bestPriority ? current : best;
+        });
+
+        await saveResult(bestResult);
         return bestResult;
     }
 
