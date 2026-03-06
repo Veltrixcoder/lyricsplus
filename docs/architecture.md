@@ -25,8 +25,8 @@ The project follows a modular structure, primarily organized within the `src/` d
 *   **`src/shared/`**: Contains common utilities, configurations, middleware, parsers, and services that are shared across different modules.
     *   **`config.js`**: Application-wide configuration settings.
     *   **`middleware/`**: Global or shared middleware functions (e.g., `cors.middleware.js`).
-    *   **`parsers/`**: Logic for parsing lyrics from various formats (e.g., KPOE, LRC, Musixmatch, Spotify, TTML).
-    *   **`services/`**: Integrations with external APIs or business logic components (e.g., `appleMusic.service.js`, `lyricsPlus.service.js`, `musixmatch.service.js`, `spotify.service.js`, `songCatalog.service.js`).
+    *   **`parsers/`**: Logic for parsing lyrics from various formats (e.g., KPOE, LRC, Musixmatch, Spotify, TTML, QRC/QQ).
+    *   **`services/`**: Integrations with external APIs or business logic components (e.g., `appleMusic.service.js`, `lyricsPlus.service.js`, `musixmatch.service.js`, `qq.service.js`, `spotify.service.js`, `songCatalog.service.js`).
     *   **`utils/`**: General utility functions (e.g., `db.util.js`, `file.util.js`, `googleDrive.util.js`, `kv.emulator.js`, `similarity.util.js`).
 
 ## Request Flow

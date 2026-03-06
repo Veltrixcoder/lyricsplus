@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { handleLyricsRequest } from '../modules/lyrics/lyrics.handler.js';
+import { handleLyricsRequest, handleRawLyricsRequest } from '../modules/lyrics/lyrics.handler.js';
 import { handleSonglistSearch } from '../modules/songCatalog/songCatalog.handler.js';
 import { handleMetadataGet } from '../modules/metadata/metadata.handler.js';
 import { handleChallenge, handleSubmit } from '../modules/submit/submit.handler.js';
@@ -22,6 +22,7 @@ app.get('/v1/ttml/get', (c) => {
     c.set('format', 'ttml');
     return handleLyricsRequest(c);
 });
+app.get('/v1/raw/get', handleRawLyricsRequest);
 
 // Song Catalog routes
 app.get('/v1/songlist/search', handleSonglistSearch);

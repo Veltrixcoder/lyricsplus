@@ -41,7 +41,7 @@ export class MusixmatchService {
             return await this._fetchLyricsWithAccount(currentAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync);
         } catch (error) {
             console.warn(`Fetch failed with ${currentAccount.AUTH_TYPE} API:`, error.message);
-            
+
             const switched = musixmatchAccountManager.switchToNextAccount();
             if (switched) {
                 console.log('Trying next account...');
@@ -52,20 +52,38 @@ export class MusixmatchService {
                     console.warn(`Fetch failed with ${nextAccount.AUTH_TYPE} API:`, retryError.message);
                 }
             }
-            
+
             return null;
         }
     }
 
     static async _fetchLyricsWithAccount(account, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync) {
 
-        const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
-        if (isIdOnlySearch) {
-            console.debug('ID-only search failed to find a cache match. Aborting Musixmatch search.');
-            return null;
+        // Prioritize ISRC search when available
+        let matchedTrack = null;
+        if (songISRC) {
+            console.debug(`Searching Musixmatch by ISRC: ${songISRC}`);
+            try {
+                const isrcResult = await this.advancedTrackSearch({ q_track_isrc: songISRC }, account, env);
+                const track = isrcResult?.message?.body?.track;
+                if (track && track.track_id) {
+                    console.debug(`Musixmatch ISRC search found track: ${track.artist_name} - ${track.track_name}`);
+                    matchedTrack = track;
+                }
+            } catch (error) {
+                console.warn('Musixmatch ISRC search failed:', error);
+            }
         }
 
-        const matchedTrack = await this._searchForBestMatch(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, account, env);
+        // Fall back to title/artist search if ISRC didn't find anything
+        if (!matchedTrack) {
+            const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
+            if (isIdOnlySearch) {
+                console.debug('ISRC search found no match and no title/artist provided. Aborting Musixmatch search.');
+                return null;
+            }
+            matchedTrack = await this._searchForBestMatch(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, account, env);
+        }
         if (!matchedTrack) {
             console.warn('No suitable track match found in Musixmatch.');
             return null;
@@ -101,6 +119,7 @@ export class MusixmatchService {
     }
 
     static async searchTrack(query, account, env) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         if (account.AUTH_TYPE === 'android') {
             return await this._androidSearchTrack(query, account, env);
         } else {
@@ -115,6 +134,7 @@ export class MusixmatchService {
     }
 
     static async normalizeMusixmatchSong(track, account, env) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         let fullTrackDetails = track;
         let songwriters = [];
         let isrc = null;
@@ -131,7 +151,7 @@ export class MusixmatchService {
         } catch (error) {
             console.warn(`Failed to fetch advanced details for ${track.track_name}:`, error);
         }
-        
+
         const art = fullTrackDetails.album_coverart_100x100 || fullTrackDetails.album_coverart_350x350 || fullTrackDetails.album_coverart_500x500 || null;
         return {
             id: { musixmatch: fullTrackDetails.track_id },
@@ -151,6 +171,7 @@ export class MusixmatchService {
     // --- Core API Endpoints ---
 
     static async getLyrics(trackId, account, env) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         if (account.AUTH_TYPE === 'android') {
             return this.getSubtitle(trackId, account, env);
         } else {
@@ -162,6 +183,7 @@ export class MusixmatchService {
     }
 
     static async getSubtitle(trackId, account, env) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         if (account.AUTH_TYPE === 'android') {
             return await this._androidGetSubtitle(trackId, account, env);
         } else {
@@ -174,6 +196,7 @@ export class MusixmatchService {
     }
 
     static async getRichLyrics(trackId, account, env) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         if (account.AUTH_TYPE === 'android') {
             return await this._androidGetRichsync(trackId, account, env);
         } else {
@@ -185,6 +208,7 @@ export class MusixmatchService {
     }
 
     static async translateLyrics(trackId, account, env, language) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         if (account.AUTH_TYPE === 'android') {
             return await this._androidApiRequest(`${ANDROID_BASE_URL}crowd.track.translations.get`, account, env, {
                 translation_fields_set: 'minimal',
@@ -202,6 +226,7 @@ export class MusixmatchService {
     }
 
     static async advancedTrackSearch(params, account, env) {
+        if (!account) account = musixmatchAccountManager.getCurrentAccount();
         if (account.AUTH_TYPE === 'android') {
             const defaultParams = {
                 'subtitle_format': 'dfxp',
@@ -231,12 +256,12 @@ export class MusixmatchService {
             dateTime.getUTCFullYear().toString() +
             String(dateTime.getUTCMonth() + 1).padStart(2, "0") +
             String(dateTime.getUTCDate()).padStart(2, "0");
-        
+
         const data = apiEndpoint + formattedDate;
         const hmac = crypto.createHmac("sha1", Buffer.from(SIGNING_KEY, "utf8"));
         hmac.update(Buffer.from(data, "utf8"));
         const signature = hmac.digest("base64");
-        
+
         return signature.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     }
 
@@ -244,7 +269,7 @@ export class MusixmatchService {
         const timestamp = new Date();
         const endpoint = url.substring(ANDROID_BASE_URL.length);
         const signature = this._getApiSignature(endpoint, timestamp);
-        
+
         const finalParams = {
             ...params,
             app_id: ANDROID_APP_ID,
@@ -270,7 +295,7 @@ export class MusixmatchService {
             'x-mxm-endpoint': 'default',
             'Cookie': `x-mxm-token-guid=${uuidv4().replace(/-/g, '')}; mxm-encrypted-token=; x-mxm-user-id=; AWSELB=unknown`
         };
-        
+
         if (method === 'POST') {
             headers['Content-Type'] = 'application/json';
         }
@@ -290,9 +315,9 @@ export class MusixmatchService {
         }
 
         const response = await fetch(urlObj.toString(), options);
-        
+
         const data = await response.json();
-        
+
         return {
             data: data,
             http_code: response.status,
@@ -317,13 +342,13 @@ export class MusixmatchService {
         const url = `${ANDROID_BASE_URL}token.get`;
         const params = this._buildAndroidSignedParams(url);
         const response = await this._makeAndroidRequest(url, 'GET', params);
-        
+
         const data = response.data;
-        
+
         if (!data?.message?.header?.status_code) {
             throw new Error(`Invalid token response format`);
         }
-        
+
         const statusCode = data.message.header.status_code;
         if (statusCode !== 200) {
             throw new Error(`Token request failed with status: ${statusCode}`);
@@ -338,9 +363,9 @@ export class MusixmatchService {
 
         try {
             const kvHandler = new DbHandler(env.LYRICSPLUS);
-            await kvHandler.set(ANDROID_TOKEN_KEY, { 
-                token: newToken, 
-                expiryTime: expirationTime 
+            await kvHandler.set(ANDROID_TOKEN_KEY, {
+                token: newToken,
+                expiryTime: expirationTime
             }, TOKEN_EXPIRY_SECONDS);
         } catch (err) {
             console.warn('Failed to cache token:', err.message);
@@ -359,7 +384,7 @@ export class MusixmatchService {
             const kvHandler = new DbHandler(env.LYRICSPLUS);
             const cachedTokenData = await kvHandler.get(ANDROID_TOKEN_KEY);
             const currentTime = Date.now();
-            
+
             if (cachedTokenData?.token && cachedTokenData?.expiryTime > currentTime) {
                 state.currentToken = cachedTokenData.token;
                 console.log('Using cached Android token.');
@@ -369,7 +394,7 @@ export class MusixmatchService {
         } catch (error) {
             console.warn(`Could not read Android token: ${error.message}`);
         }
-        
+
         console.log('Fetching a new Android token...');
         return await this._fetchAndroidToken(env);
     }
@@ -404,7 +429,7 @@ export class MusixmatchService {
         }
 
         const key = `${account.EMAIL}:${account.NAMEID}`;
-        
+
         let state = androidClientStates.get(key);
         if (!state) {
             state = {
@@ -420,11 +445,11 @@ export class MusixmatchService {
         try {
             const { loginNeeded, token } = await this._getAndroidToken(env, state);
             state.currentToken = token;
-            
+
             if (loginNeeded) {
                 await this._androidLogin(account, env, state);
             }
-            
+
             console.log('Android initialization successful. Logged in.');
             return state;
         } catch (error) {
@@ -441,22 +466,22 @@ export class MusixmatchService {
     static async _androidApiRequest(url, account, env, params = {}, body = null, method = 'GET') {
         const key = `${account.EMAIL}:${account.NAMEID}`;
         let state = androidClientStates.get(key);
-        
+
         if (!state || !state.isLoggedIn) {
             console.warn('Not logged in. Attempting to initialize Android client...');
             state = await this._initializeAndroidClient(account, env);
         }
-        
+
         const signedParams = this._buildAndroidSignedParams(url, params, state.currentToken);
         let response = await this._makeAndroidRequest(url, method, signedParams, body);
-        
+
         const responseStatusCode = response.data?.message?.header?.status_code;
 
         if (response.http_code === 401 || responseStatusCode === 401) {
             console.log('Auth token expired or invalid (401). Refreshing token and re-logging in...');
             await this._clearAndroidToken(env, key);
             state = await this._initializeAndroidClient(account, env);
-            
+
             const newSignedParams = this._buildAndroidSignedParams(url, params, state.currentToken);
             response = await this._makeAndroidRequest(url, method, newSignedParams, body);
         }
@@ -477,14 +502,14 @@ export class MusixmatchService {
             page: 1,
             page_size: 5
         };
-        
+
         const response = await this._androidApiRequest(`${ANDROID_BASE_URL}macro.search`, account, env, params);
         const trackList = response.message?.body?.macro_result_list?.track_list || [];
         return { message: { body: { track_list: trackList } } };
     }
 
     static async _androidGetSubtitle(trackId, account, env) {
-        const params = { 
+        const params = {
             track_id: trackId,
             subtitle_format: 'lrc'
         };
@@ -526,7 +551,7 @@ export class MusixmatchService {
         if (!account) {
             account = musixmatchAccountManager.getCurrentAccount();
         }
-        
+
         if (!account) throw new Error('No Musixmatch account available.');
 
         const response = await fetch(url.toString(), {
@@ -544,7 +569,7 @@ export class MusixmatchService {
     }
 
     // --- Shared Internal Helpers ---
-    
+
     static async _checkCache(title, artist, album, duration, isrc, platformId, gd, forceReload, requireWordSync) {
         if (forceReload) return null;
 
@@ -597,11 +622,11 @@ export class MusixmatchService {
                 candidates.push(...tracks.map(t => {
                     const track = t.track || t;
                     return {
-                        attributes: { 
-                            name: track.track_name, 
-                            artistName: track.artist_name, 
-                            albumName: track.album_name, 
-                            durationInMillis: track.track_length * 1000 
+                        attributes: {
+                            name: track.track_name,
+                            artistName: track.artist_name,
+                            albumName: track.album_name,
+                            durationInMillis: track.track_length * 1000
                         },
                         originalTrack: track
                     };
@@ -612,7 +637,7 @@ export class MusixmatchService {
         }
         return null;
     }
-    
+
     static async _fetchLyricsFromApi(trackId, account, env, requireWordSync) {
         try {
             const richLyrics = await this.getRichLyrics(trackId, account, env);
@@ -633,7 +658,7 @@ export class MusixmatchService {
                 console.warn('Failed to fetch subtitle lyrics:', error);
             }
         }
-        
+
         return null;
     }
 }

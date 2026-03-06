@@ -14,7 +14,7 @@ All primary API endpoints are organized modularly within the `src/modules/` dire
 
 When both `title`/`artist` and an `isrc` or `platformId` are provided in a lyrics retrieval request, the system prioritizes accuracy by leveraging all available information:
 
-1.  **Full Search Scope**: The system performs a comprehensive search across all configured lyric sources (including external APIs like Apple Music, Musixmatch, and Spotify), not just the local cache.
+1.  **Full Search Scope**: The system performs a comprehensive search across all configured lyric sources (including external APIs like Apple Music, Musixmatch, Spotify, and QQ Music), not just the local cache.
 2.  **Cache Lookup**: During the initial cache check, if a cached entry matches the provided `isrc` or `platformId`, it is considered a perfect match and is returned immediately. This ensures that specific versions identified by an ID are prioritized.
 3.  **External API Disambiguation**: If the song is not found in the cache, external APIs are queried using the `title` and `artist`. The provided `isrc` or `platformId` is then used to filter and select the most accurate song from the results returned by the external service.
 
@@ -28,8 +28,8 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `album` (optional): The album of the song.
         *   `duration` (optional): The duration of the song in milliseconds.
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
-        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID). Can be used as an alternative to `title` and `artist` for cached lookups.
-        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify`).
+        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
+        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
         *   `forceReload` (optional): Set to `true` to bypass cache and force a reload of lyrics.
     *   **Response**: Returns lyrics in a legacy format (v1).
 
@@ -41,8 +41,8 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `album` (optional): The album of the song.
         *   `duration` (optional): The duration of the song in milliseconds.
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
-        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID). Can be used as an alternative to `title` and `artist` for cached lookups.
-        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify`).
+        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
+        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
         *   `forceReload` (optional): Set to `true` to bypass cache and force a reload of lyrics.
     *   **Response**: Returns lyrics in the default format (v2).
 
@@ -54,10 +54,24 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `album` (optional): The album of the song.
         *   `duration` (optional): The duration of the song in milliseconds.
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
-        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID). Can be used as an alternative to `title` and `artist` for cached lookups.
-        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify`).
+        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
+        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
         *   `forceReload` (optional): Set to `true` to bypass cache and force a reload of lyrics.
     *   **Response**: Returns lyrics content in Apple's TTML format.
+
+*   **`GET /v1/raw/get`**
+    *   **Description**: Retrieves the raw, unprocessed lyrics file from the original source. Returns the data in its native format (TTML for Apple Music, JSON for Musixmatch/Spotify, QRC/XML for QQ Music) instead of converting it to the LyricsPlus format. Useful for clients that need the original source data.
+    *   **Parameters**:
+        *   `title` (conditional): The title of the song. Required if `isrc` and `platformId` are not provided.
+        *   `artist` (conditional): The artist of the song. Required if `isrc` and `platformId` are not provided.
+        *   `album` (optional): The album of the song.
+        *   `duration` (optional): The duration of the song in milliseconds.
+        *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
+        *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
+        *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
+        *   `forceReload` (optional): Set to `true` to bypass cache and force a reload of lyrics.
+    *   **Response**: Returns the raw lyrics file with the appropriate `Content-Type` header (`application/xml` for Apple/QQ, `application/json` for Musixmatch/Spotify). Includes `X-Lyrics-Source` and `X-Processing-Time` headers.
+
 
 ### Song Catalog
 

@@ -19,14 +19,25 @@ export class AppleMusicService {
                 return initialCacheResult;
             }
 
-            const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
-            if (isIdOnlySearch) {
-                console.debug('ID-only search failed to find a cache match. Aborting Apple Music search.');
-                return null;
+            console.debug('No cached lyrics found, searching Apple Music...');
+
+            // Prioritize ISRC search when available
+            let bestMatch = null;
+            if (songISRC) {
+                console.debug(`Searching Apple Music by ISRC: ${songISRC}`);
+                bestMatch = await this._searchByIsrc(songISRC);
             }
 
-            console.debug('No cached lyrics found, searching Apple Music...');
-            const bestMatch = await this._searchForBestMatch(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration);
+            // Fall back to title/artist search if ISRC didn't find anything
+            if (!bestMatch) {
+                const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
+                if (isIdOnlySearch) {
+                    console.debug('ISRC search found no match and no title/artist provided. Aborting Apple Music search.');
+                    return null;
+                }
+                bestMatch = await this._searchForBestMatch(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration);
+            }
+
             if (!bestMatch) {
                 console.warn('No suitable match found in Apple Music search.');
                 return null;
@@ -184,7 +195,7 @@ export class AppleMusicService {
             albumArtUrl: attributes.artwork?.url.replace('{w}', '300').replace('{h}', '300') || null,
             durationMs: attributes.durationInMillis,
             isrc: fullSongAttributes?.isrc || null,
-            songwriters: fullSongAttributes?.songwriterNames || attributes.songwriterNames || [],
+            songwriters: fullSongAttributes?.songwriterNames || attributes.songwriterNames || attributes.composerName || [],
             availability: ['Apple Music'],
             externalUrls: { appleMusic: attributes.url }
         };
@@ -212,6 +223,26 @@ export class AppleMusicService {
                 Referer: 'https://music.apple.com',
                 'media-user-token': currentAccount.MUSIC_AUTH_TOKEN
             };
+        }
+    }
+
+    static async _searchByIsrc(isrc) {
+        try {
+            const storefront = await this.getStorefront();
+            const response = await this.makeAppleMusicRequest(
+                `${APPLE_MUSIC.BASE_URL}/catalog/${storefront}/songs?filter[isrc]=${encodeURIComponent(isrc)}`, {}
+            );
+            const data = await response.json();
+            const songs = data.data || [];
+            if (songs.length > 0) {
+                console.debug(`Apple Music ISRC search found ${songs.length} result(s) for ISRC: ${isrc}`);
+                return songs[0];
+            }
+            console.debug(`Apple Music ISRC search found no results for ISRC: ${isrc}`);
+            return null;
+        } catch (error) {
+            console.warn('Apple Music ISRC search failed:', error);
+            return null;
         }
     }
 

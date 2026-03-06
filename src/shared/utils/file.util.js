@@ -83,9 +83,9 @@ export class FileUtils {
         const isrcPart = (songISRC != null) ? String(songISRC).trim() : 'null';
         const platformIdPart = (songPlatformId != null) ? String(songPlatformId).trim() : 'null';
         const isrcPlatformPart = ` <${isrcPart}::${platformIdPart}>`;
-        
+
         const filename = `${cleanup(songArtist)} - ${cleanup(songTitle.trim())}${albumPart}${durationPart}${isrcPlatformPart}`;
-        
+
         return filename.trim();
     }
 
@@ -195,7 +195,7 @@ export class FileUtils {
                 console.debug("Top file match found with score:", bestMatch.scoreInfo.score);
                 return bestMatch.candidate.originalFile;
             }
-            
+
             return null;
         } catch (error) {
             console.error("Error searching for existing file:", error);
@@ -217,6 +217,10 @@ export class FileUtils {
         return this.findExistingFile(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.CACHED_MUSIXMATCH, 'application/json');
     }
 
+    static async findExistingQq(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId) {
+        return this.findExistingFile(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.CACHED_QQ, 'application/xml');
+    }
+
     static async findUserJSON(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId) {
         return this.findExistingFile(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.USERTML_JSON, 'application/json');
     }
@@ -231,6 +235,10 @@ export class FileUtils {
 
     static async findExactMusixmatchByIds(gd, songISRC, songPlatformId) {
         return this.findExactMatchByIds(gd, songISRC, songPlatformId, GDRIVE.CACHED_MUSIXMATCH, 'application/json');
+    }
+
+    static async findExactQqByIds(gd, songISRC, songPlatformId) {
+        return this.findExactMatchByIds(gd, songISRC, songPlatformId, GDRIVE.CACHED_QQ, 'application/xml');
     }
 
     static async findExactUserJSONByIds(gd, songISRC, songPlatformId) {

@@ -75,13 +75,12 @@ export class SongCatalogService {
      */
     static async _searchAppleMusic(query) {
         try {
-            const dev_token = await AppleMusicService.getAppleMusicAuth();
             const storefront = await AppleMusicService.getStorefront();
             const searchData = await AppleMusicService.searchSong(query, storefront);
             const songsData = searchData.results?.songs?.data || [];
-            
+
             return Promise.all(
-                songsData.map(song => AppleMusicService.normalizeAppleMusicSong(song, dev_token, storefront))
+                songsData.map(song => AppleMusicService.normalizeAppleMusicSong(song, storefront))
             );
         } catch (error) {
             console.error("Error searching Apple Music:", error);
@@ -112,12 +111,11 @@ export class SongCatalogService {
      */
     static async _searchMusixmatch(query, env) {
         try {
-            const userToken = await MusixmatchService.getUserToken(env);
-            const searchData = await MusixmatchService.searchTrack(query, userToken);
+            const searchData = await MusixmatchService.searchTrack(query, null, env);
             const tracksData = searchData.message?.body?.track_list || [];
-            
+
             return Promise.all(
-                tracksData.map(trackResult => MusixmatchService.normalizeMusixmatchSong(trackResult.track, userToken))
+                tracksData.map(trackResult => MusixmatchService.normalizeMusixmatchSong(trackResult.track, null, env))
             );
         } catch (error) {
             console.error("Error searching Musixmatch:", error);

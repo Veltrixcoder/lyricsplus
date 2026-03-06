@@ -2,6 +2,7 @@
 import { AppleMusicService } from "../../shared/services/appleMusic.service.js";
 import { MusixmatchService } from "../../shared/services/musixmatch.service.js";
 import { SpotifyService } from "../../shared/services/spotify.service.js";
+import { QQService } from "../../shared/services/qq.service.js";
 import { LyricsPlusService } from "../../shared/services/lyricsPlus.service.js";
 import { FileUtils } from "../../shared/utils/file.util.js";
 import { GDRIVE } from "../../shared/config.js";
@@ -10,21 +11,21 @@ import GoogleDrive from "../../shared/utils/googleDrive.util.js";
 const gd = new GoogleDrive();
 
 export async function fetchSongs(env) {
-  let songs = await env.SONGS_KV.get('songList', { type: 'json' });
-  if (!songs) {
-    console.debug('Song list not found in KV, fetching from Google Drive...');
-    const fileContent = await gd.fetchFile(GDRIVE.SONGS_FILE_ID);
-    if (typeof fileContent === "string" && (fileContent.trim().startsWith("{") || fileContent.trim().startsWith("["))) {
-      songs = JSON.parse(fileContent || "[]");
+    let songs = await env.SONGS_KV.get('songList', { type: 'json' });
+    if (!songs) {
+        console.debug('Song list not found in KV, fetching from Google Drive...');
+        const fileContent = await gd.fetchFile(GDRIVE.SONGS_FILE_ID);
+        if (typeof fileContent === "string" && (fileContent.trim().startsWith("{") || fileContent.trim().startsWith("["))) {
+            songs = JSON.parse(fileContent || "[]");
+        } else {
+            songs = fileContent || [];
+        }
+        await env.SONGS_KV.put('songList', JSON.stringify(songs));
+        console.debug('Song list fetched from Google Drive and stored in KV.');
     } else {
-      songs = fileContent || [];
+        console.debug('Song list fetched from KV.');
     }
-    await env.SONGS_KV.put('songList', JSON.stringify(songs));
-    console.debug('Song list fetched from Google Drive and stored in KV.');
-  } else {
-    console.debug('Song list fetched from KV.');
-  }
-  return songs;
+    return songs;
 }
 
 export async function safeFetchSongs(env) {
@@ -115,6 +116,29 @@ async function saveBestLyrics(source, fileName, rawData, convertedData, gd, song
                 );
             }
         }
+        else if (source === 'qq') {
+            const existingFile = await FileUtils.findExistingFile(
+                gd,
+                songTitle,
+                songArtist,
+                songAlbum,
+                songDuration,
+                songISRC,
+                songPlatformId,
+                GDRIVE.CACHED_QQ,
+                'application/xml' // Or text/plain, keeping standard with GDrive APIs
+            );
+            if (existingFile) {
+                fileId = await gd.updateFile(existingFile.id, rawData);
+            } else {
+                fileId = await gd.uploadFile(
+                    `${fileName}.qrc`,
+                    'application/xml',
+                    rawData,
+                    GDRIVE.CACHED_QQ
+                );
+            }
+        }
         console.debug(`Successfully saved best lyrics from ${source} to Google Drive.`);
     } catch (error) {
         console.error(`Failed to save lyrics from ${source}:`, error);
@@ -141,11 +165,11 @@ export async function handleSongLyrics(
     const isIdOnlySearch = (!songTitle || !songArtist) && (songISRC || songPlatformId);
 
     if (isIdOnlySearch) {
-        sources = ['apple', 'lyricsplus', 'musixmatch', 'spotify'];
+        sources = ['apple', 'lyricsplus', 'qq', 'musixmatch', 'spotify'];
     } else {
-        sources = preferredSources.length > 0 ? preferredSources : ['apple', 'lyricsplus', 'musixmatch-word', 'musixmatch', 'spotify'];
+        sources = preferredSources.length > 0 ? preferredSources : ['apple', 'lyricsplus', 'qq', 'musixmatch-word', 'musixmatch', 'spotify'];
     }
-    
+
     const getSyncPriority = (result) => {
         if (!result || !result.data) return 0;
 
@@ -153,7 +177,7 @@ export async function handleSongLyrics(
         const data = result.data;
         const syncType = data.type ? data.type.toUpperCase() : '';
 
-        if (sourceType.includes('musixmatch') || sourceType.includes('spotify')) {
+        if (sourceType.includes('musixmatch') || sourceType.includes('spotify') || sourceType.includes('qq')) {
             if (syncType === 'WORD' || syncType === 'SYLLABLE') return 3;
             if (syncType === 'LINE') return 2;
             return 1;
@@ -181,6 +205,9 @@ export async function handleSongLyrics(
             case 'spotify':
                 console.debug(`Attempting Spotify (as MusixMatch alt) Fetch`);
                 return SpotifyService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload);
+            case 'qq':
+                console.debug(`Attempting QQ Fetch`);
+                return QQService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env);
             default:
                 return Promise.resolve(null);
         }
@@ -199,11 +226,11 @@ export async function handleSongLyrics(
         if (result.rawData && result.data.cached !== 'GDrive' && result.data.cached !== 'Database') {
             saveBestLyrics(
                 result.source.toLowerCase().replace('-word', ''),
-                finalFileName, 
+                finalFileName,
                 result.rawData,
                 result.data,
                 gd,
-                exactSongTitle, 
+                exactSongTitle,
                 exactSongArtist,
                 exactSongAlbum,
                 exactSongDuration,
@@ -242,9 +269,9 @@ export async function handleSongLyrics(
 
         if (bestPriority === 2) {
             console.debug(`Found line sync lyrics from first two sources, checking for word sync in remaining sources`);
-            
+
             const remainingSources = sources.slice(2).filter(s => s !== 'musixmatch' && s !== 'spotify');
-            
+
             if (remainingSources.length > 0) {
                 const remainingPromises = remainingSources.map(source => fetchSource(source));
                 const remainingResults = await Promise.all(remainingPromises.map(p => p.catch(e => {
@@ -307,7 +334,7 @@ export async function handleSongLyrics(
                 searchedSources: sources,
                 songInfo: {
                     title: songTitle,
-                    artist: songArtist, 
+                    artist: songArtist,
                     album: songAlbum
                 }
             }

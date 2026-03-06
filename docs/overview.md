@@ -22,7 +22,7 @@ The application now follows a modular structure, with each major feature or doma
 
 *   **Handlers**: Logic for processing requests and interacting with services.
 *   **Controllers**: Additional business logic or data processing, complementing handlers.
-*   **Services**: Business logic and external API integrations (e.g., Apple Music, Musixmatch, Spotify).
+*   **Services**: Business logic and external API integrations (e.g., Apple Music, Musixmatch, Spotify, QQ Music).
 
 This structure promotes better organization, reusability, and testability of code.
 

@@ -5,8 +5,8 @@ import GoogleDrive from "../../shared/utils/googleDrive.util.js";
 
 const gd = new GoogleDrive();
 
-const POW_DIFFICULTY = 5; 
-const POW_CHALLENGE_EXPIRATION = '240s';
+const POW_DIFFICULTY = 5;
+const POW_CHALLENGE_EXPIRATION = '600s';
 
 async function createChallengeToken(challenge, secret) {
     const secretKey = new TextEncoder().encode(secret);
@@ -76,7 +76,7 @@ export async function handleSubmit(c) {
             return c.json({ error: "Invalid proof of work solution" }, 400);
         }
 
-        const { songTitle, songArtist, songAlbum, songDuration, lyricsData, forceUpload } = lyricsSubmitData;
+        const { songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, lyricsData, forceUpload } = lyricsSubmitData;
         if (!songTitle || !songArtist || !songDuration || !lyricsData) {
             return c.json({ error: "Missing required parameters" }, 400);
         }
@@ -89,7 +89,8 @@ export async function handleSubmit(c) {
             songDuration,
             lyricsData,
             forceUpload || false,
-            c.env
+            songISRC || null,
+            songPlatformId || null
         );
 
         return c.json(result, result.success ? 200 : 400);

@@ -78,13 +78,35 @@ export class SpotifyService {
                 return initialCacheResult;
             }
 
-            const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
-            if (isIdOnlySearch) {
-                console.debug('ID-only search failed to find a cache match. Aborting Spotify search.');
-                return null;
+            // Prioritize ISRC search when available
+            let spotifyTracks = null;
+            if (songISRC) {
+                console.debug(`Searching Spotify by ISRC: ${songISRC}`);
+                try {
+                    const isrcSearchQuery = `isrc:${encodeURIComponent(songISRC)}`;
+                    const response = await this.makeSpotifyRequest(
+                        `${SPOTIFY.BASE_URL}/search?q=${isrcSearchQuery}&type=track&limit=10`, {}
+                    );
+                    const data = await response.json();
+                    spotifyTracks = data.tracks?.items?.length ? data.tracks.items : null;
+                    if (spotifyTracks) {
+                        console.debug(`Spotify ISRC search found ${spotifyTracks.length} result(s) for ISRC: ${songISRC}`);
+                    }
+                } catch (error) {
+                    console.warn('Spotify ISRC search failed:', error);
+                }
             }
 
-            const spotifyTracks = await this.searchSpotifySong(originalSongTitle, originalSongArtist);
+            // Fall back to title/artist search if ISRC didn't find anything
+            if (!spotifyTracks) {
+                const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
+                if (isIdOnlySearch) {
+                    console.debug('ISRC search found no match and no title/artist provided. Aborting Spotify search.');
+                    return null;
+                }
+                spotifyTracks = await this.searchSpotifySong(originalSongTitle, originalSongArtist);
+            }
+
             if (!spotifyTracks || spotifyTracks.length === 0) {
                 console.warn('No Spotify tracks found for search query.');
                 return null;
