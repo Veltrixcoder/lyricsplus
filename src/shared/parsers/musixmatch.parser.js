@@ -32,7 +32,7 @@ export function convertMusixmatchToJSON(musixmatchData, requireWordSync = false)
 
     return {
         type: type,
-        KpoeTools: "1.1-MusixmatchToJSON",
+        KpoeTools: "1.2-MusixmatchToJSON",
         metadata: {
             source: "Musixmatch",
             songWriters: extractSongwriters(lyricsCopyright),
@@ -51,9 +51,7 @@ function parseSubtitleToRaw(subtitleBody) {
         if (match) {
             const [, min, sec, text] = match;
             const time = Math.round((parseInt(min, 10) * 60 + parseFloat(sec)) * 1000);
-            if (text.trim()) {
-                acc.push({ time, text: text.trim() });
-            }
+            acc.push({ time, text: text.trim() });
         }
         return acc;
     }, []);
@@ -133,7 +131,7 @@ function processSubtitleLines(lines) {
                 songPartIndex: partIndex
             }
         };
-    });
+    }).filter(line => line.text !== '');
 
     return { lyrics, songParts };
 }

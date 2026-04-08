@@ -1,5 +1,6 @@
 // utils/similarityUtils.js
 import { transliterate as tr } from 'transliteration';
+import { logger } from './logger.util.js';
 
 export class SimilarityUtils {
 
@@ -67,30 +68,47 @@ export class SimilarityUtils {
 
         const tags = new Set();
         const featArtists = [];
-        let cleanTitle = this.normalizeString(title);
 
+        // Work on the raw lowercased title so brackets are still intact.
+        // normalizeString() strips all punctuation including () and [], which
+        // breaks the feat lookahead and causes feat to consume the rest of the
+        // title (e.g. "feat. Shifa) [Live at …]" → feat eats "live at …" too).
+        let cleanTitle = title.toLowerCase();
+
+        // Extract feat artists BEFORE any normalization so the bracket-based
+        // lookahead (?=\s*[()[\]]|$) works correctly.
         const featRegex = /(?:\s+(?:feat\.?|ft\.?|featuring|with)\s+([^()[\]]+))(?=\s*[()[\]]|$)/gi;
         let featMatch;
         while ((featMatch = featRegex.exec(cleanTitle)) !== null) {
             const artists = featMatch[1].split(/\s*[&,]\s*/).map(a => a.trim()).filter(Boolean);
             featArtists.push(...artists);
         }
-
         cleanTitle = cleanTitle.replace(featRegex, ' ');
 
+        // Normalize punctuation but intentionally preserve () [] {} so that
+        // tag patterns and the bracket-stripping step below work correctly.
+        cleanTitle = cleanTitle
+            .replace(/[^\w\s\[\](){}]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        // Tag patterns: match both ( and [ as bracket prefix (fix: original
+        // used [-(] which only matched ( and -, missing square-bracket prefixes
+        // like "[Live at …]").
         const tagPatterns = [
-            /(?:[-(]|\s-\s)(remix|mix|rmx)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(live|concert)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(acoustic|unplugged)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(instrumental|karaoke)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(radio\s?edit|single\s?edit)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(remaster(?:ed)?|rerecorded?)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(explicit|clean|censored)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(demo|rough|rough\s?mix)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(extended|ext|full)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(deluxe|anniversary|special)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(mono|stereo)(?:\W|$)/gi,
-            /(?:[-(]|\s-\s)(edit|version|ver\.?)(?:\W|$)/gi
+            /(?:[([-]|\s-\s)(remix|mix|rmx)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(live|concert)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(acoustic|unplugged)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(instrumental|karaoke)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(radio\s?edit|single\s?edit)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(remaster(?:ed)?|rerecorded?)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(explicit|clean|censored)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(demo|rough|rough\s?mix)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(extended|ext|full)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(deluxe|anniversary|special)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(mono|stereo)(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(edit|version|ver )(?:\W|$)/gi,
+            /(?:[([-]|\s-\s)(sing.?along)(?:\W|$)/gi,
         ];
 
         tagPatterns.forEach(pattern => {
@@ -100,6 +118,7 @@ export class SimilarityUtils {
             }
         });
 
+        // Strip all bracket content to produce the bare baseTitle.
         cleanTitle = cleanTitle
             .replace(/\[[^\]]*\]/g, ' ')
             .replace(/\([^)]*\)/g, ' ')
@@ -240,24 +259,9 @@ export class SimilarityUtils {
         return Math.max(scoreOriginal, scoreRomanized);
     }
 
-    static calculateAlbumSimilarity(album1, album2) {
-        if (!album1 || !album2) return 0.1;
-
-        const computeScore = (a1, a2) => {
-            const norm1 = this.normalizeString(a1);
-            const norm2 = this.normalizeString(a2);
-            if (norm1 === norm2) return 1.0;
-            return this.getDiceCoefficient(norm1, norm2);
-        };
-
-        return Math.max(
-            computeScore(album1, album2),
-            computeScore(tr(album1), tr(album2))
-        );
-    }
     static calculateDurationSimilarity(duration1, duration2) {
-        if (duration1 === undefined || duration2 === undefined ||
-            duration1 === null || duration2 === null) {
+        if (duration1 == null || duration2 == null ||
+            duration1 <= 0 || duration2 <= 0) {
             return 0.7;
         }
 
@@ -353,16 +357,16 @@ export class SimilarityUtils {
             }
         }
 
+        const hasDuration = queryDuration > 0 && candDuration > 0;
+
         let weights = { title: 0.5, artist: 0.4, album: 0.05, duration: 0.05 };
 
-        if (queryDuration !== undefined && queryDuration !== null &&
-            candDuration !== undefined && candDuration !== null) {
+        if (hasDuration) {
             weights = { title: 0.35, artist: 0.35, album: 0.1, duration: 0.2 };
         }
 
         if (queryAlbum && candAlbum) {
-            if (queryDuration !== undefined && queryDuration !== null &&
-                candDuration !== undefined && candDuration !== null) {
+            if (hasDuration) {
                 weights = { title: 0.3, artist: 0.3, album: 0.2, duration: 0.2 };
             } else {
                 weights = { title: 0.4, artist: 0.4, album: 0.2, duration: 0 };
@@ -414,6 +418,14 @@ export class SimilarityUtils {
             if (Math.abs(a.scoreInfo.score - b.scoreInfo.score) > 0.001) {
                 return b.scoreInfo.score - a.scoreInfo.score;
             }
+ 
+            // Always prefer candidates that have a duration, regardless of whether
+            // the query has a duration — a candidate with duration info is more
+            // reliable and avoids picking durationless results by accident.
+            const aHasDuration = a.scoreInfo.durations?.candidate != null;
+            const bHasDuration = b.scoreInfo.durations?.candidate != null;
+            if (aHasDuration !== bHasDuration) return bHasDuration ? 1 : -1;
+ 
             if (queryDuration !== undefined) {
                 return b.scoreInfo.components.durationScore - a.scoreInfo.components.durationScore;
             }

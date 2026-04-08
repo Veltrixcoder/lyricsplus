@@ -1,4 +1,4 @@
-import { handleSongLyrics, safeFetchSongs } from "./lyrics.controller.js";
+import { handleSongLyrics } from "./lyrics.controller.js";
 import { v2Tov1 } from "../../shared/parsers/kpoe.parser.js";
 import { convertJsonToTTML } from "../../shared/parsers/ttml.parser.js";
 import GoogleDrive from "../../shared/utils/googleDrive.util.js";
@@ -30,7 +30,6 @@ export async function handleLyricsRequest(c) {
     const source = query.source;
     const forceReload = query.forceReload === "true";
 
-    const songs = await safeFetchSongs(c.env);
 
     const result = await handleSongLyrics(
         songTitle,
@@ -39,7 +38,6 @@ export async function handleLyricsRequest(c) {
         songDuration,
         songISRC,
         songPlatformId,
-        songs,
         gd,
         source ? source.split(",") : undefined,
         forceReload,
@@ -103,8 +101,6 @@ export async function handleRawLyricsRequest(c) {
     const source = query.source;
     const forceReload = query.forceReload === "true";
 
-    const songs = await safeFetchSongs(c.env);
-
     const result = await handleSongLyrics(
         songTitle,
         songArtist,
@@ -112,7 +108,6 @@ export async function handleRawLyricsRequest(c) {
         songDuration,
         songISRC,
         songPlatformId,
-        songs,
         gd,
         source ? source.split(",") : undefined,
         forceReload,

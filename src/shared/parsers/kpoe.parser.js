@@ -1,17 +1,68 @@
+/**
+ * Normalizes a v2 lyrics object so every line element uses songPartIndex
+ * pointing into metadata.songParts[], replacing legacy songPart strings.
+ * If all lines already have songPartIndex, returns the object unchanged.
+ */
+export function normalizeV2(data) {
+  if (data.lyrics?.length > 0 && data.lyrics.every(l => l.element?.songPartIndex != null)) {
+    return data;
+  }
+
+  const songParts = [];
+  let currentPartName = null;
+  let currentPartIndex = -1;
+
+  const normalizedLyrics = data.lyrics.map(line => {
+    const partName = line.element?.songPart || '';
+
+    if (partName !== currentPartName) {
+      currentPartName = partName;
+      currentPartIndex++;
+      songParts.push({ name: partName });
+    }
+
+    const { songPart, ...restElement } = line.element || {};
+    return {
+      ...line,
+      element: { ...restElement, songPartIndex: currentPartIndex }
+    };
+  });
+
+  // Derive time/duration for each songPart from the lines that belong to it
+  normalizedLyrics.forEach(line => {
+    const idx = line.element.songPartIndex;
+    const part = songParts[idx];
+    const endTime = line.time + line.duration;
+
+    if (part.time == null || line.time < part.time) part.time = line.time;
+    if (part._end == null || endTime > part._end) part._end = endTime;
+  });
+
+  songParts.forEach(part => {
+    if (part.time != null && part._end != null) part.duration = part._end - part.time;
+    delete part._end;
+  });
+
+  return {
+    ...data,
+    metadata: { ...data.metadata, songParts },
+    lyrics: normalizedLyrics,
+  };
+}
+
 export function v1Tov2(data) {
   const groupedLyrics = [];
   let currentGroup = null;
 
   if (data.type === "Line") {
     data.lyrics.forEach(segment => {
-      const lineItem = {
+      groupedLyrics.push({
         time: segment.time,
         duration: segment.duration,
         text: segment.text,
         syllabus: [],
         element: segment.element || { key: "", songPart: "", singer: "" }
-      };
-      groupedLyrics.push(lineItem);
+      });
     });
   } else {
     data.lyrics.forEach(segment => {
@@ -33,7 +84,7 @@ export function v1Tov2(data) {
         text: segment.text
       };
 
-      if (segment.element && segment.element.isBackground === true) {
+      if (segment.element?.isBackground === true) {
         syllabusEntry.isBackground = true;
       }
 
@@ -42,23 +93,14 @@ export function v1Tov2(data) {
       if (segment.isLineEnding === 1) {
         let earliestTime = Infinity;
         let latestEndTime = 0;
-
-        currentGroup.syllabus.forEach(syllable => {
-          if (syllable.time < earliestTime) {
-            earliestTime = syllable.time;
-          }
-
-          const endTime = syllable.time + syllable.duration;
-          if (endTime > latestEndTime) {
-            latestEndTime = endTime;
-          }
+        currentGroup.syllabus.forEach(syl => {
+          if (syl.time < earliestTime) earliestTime = syl.time;
+          const end = syl.time + syl.duration;
+          if (end > latestEndTime) latestEndTime = end;
         });
-
         currentGroup.time = earliestTime;
         currentGroup.duration = latestEndTime - earliestTime;
-
         currentGroup.text = currentGroup.text.trim();
-
         groupedLyrics.push(currentGroup);
         currentGroup = null;
       }
@@ -67,89 +109,85 @@ export function v1Tov2(data) {
     if (currentGroup) {
       let earliestTime = Infinity;
       let latestEndTime = 0;
-
-      currentGroup.syllabus.forEach(syllable => {
-        if (syllable.time < earliestTime) {
-          earliestTime = syllable.time;
-        }
-
-        const endTime = syllable.time + syllable.duration;
-        if (endTime > latestEndTime) {
-          latestEndTime = endTime;
-        }
+      currentGroup.syllabus.forEach(syl => {
+        if (syl.time < earliestTime) earliestTime = syl.time;
+        const end = syl.time + syl.duration;
+        if (end > latestEndTime) latestEndTime = end;
       });
-
       currentGroup.time = earliestTime;
       currentGroup.duration = latestEndTime - earliestTime;
-
       currentGroup.text = currentGroup.text.trim();
       groupedLyrics.push(currentGroup);
     }
   }
 
-  return {
+  // normalizeV2 converts element.songPart -> element.songPartIndex
+  // and builds metadata.songParts from the grouped lines
+  return normalizeV2({
     type: data.type == "syllable" ? "Word" : data.type,
     KpoeTools: '2.0-LPlusBcknd,' + data.KpoeTools,
     metadata: data.metadata,
     ignoreSponsorblock: data.ignoreSponsorblock || undefined,
     lyrics: groupedLyrics,
     cached: data.cached || 'None'
-  };
+  });
 }
 
-/**
- * Converts a v2 lyrics object back to a legacy v1 object.
- * This is useful for compatibility with older systems that expect a flat lyrics array.
- *
- * @param {object} data - The v2 lyrics data, with grouped lines and a 'syllabus' array.
- * @returns {object} The converted v1 lyrics data with a flat 'lyrics' array.
- */
 export function v2Tov1(data) {
-  if (data.lyrics && data.lyrics.length > 0 && typeof data.lyrics[0].syllabus === 'undefined') {
+  if (data.lyrics?.length > 0 && typeof data.lyrics[0].syllabus === 'undefined') {
     console.warn("Data is already in V1 format. No conversion needed.");
     return data;
   }
+
+  const songPartsArray = data.metadata?.songParts || [];
+
+  // Resolve songPart string from either format so v1 element always has songPart
+  const resolveSongPart = (element) => {
+    if (element?.songPart) return element.songPart;
+    if (element?.songPartIndex != null && songPartsArray[element.songPartIndex]) {
+      return songPartsArray[element.songPartIndex].name;
+    }
+    return '';
+  };
 
   const flatLyrics = [];
 
   if (data.type === "Line") {
     data.lyrics.forEach(line => {
+      const { songPartIndex, ...restElement } = line.element || {};
       flatLyrics.push({
         time: line.time,
         duration: line.duration,
         text: line.text,
         isLineEnding: 1,
-        element: line.element || { key: "", songPart: "", singer: "" }
+        element: { ...restElement, songPart: resolveSongPart(line.element) }
       });
     });
   } else {
     data.lyrics.forEach(line => {
+      const { songPartIndex, ...restElement } = line.element || {};
+      const resolvedElement = { ...restElement, songPart: resolveSongPart(line.element) };
+
       if (!line.syllabus || line.syllabus.length === 0) {
         flatLyrics.push({
           time: line.time,
           duration: line.duration,
           text: line.text,
           isLineEnding: 1,
-          element: line.element
+          element: resolvedElement
         });
         return;
       }
 
       line.syllabus.forEach((syllable, index) => {
-        const isLastSyllableInLine = index === line.syllabus.length - 1;
-
         const v1Segment = {
           time: syllable.time,
           duration: syllable.duration,
           text: syllable.text,
-          isLineEnding: isLastSyllableInLine ? 1 : 0,
-          element: { ...line.element }
+          isLineEnding: index === line.syllabus.length - 1 ? 1 : 0,
+          element: { ...resolvedElement }
         };
-
-        if (syllable.isBackground) {
-          v1Segment.element.isBackground = true;
-        }
-
+        if (syllable.isBackground) v1Segment.element.isBackground = true;
         flatLyrics.push(v1Segment);
       });
     });

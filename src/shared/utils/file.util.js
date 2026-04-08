@@ -204,6 +204,86 @@ export class FileUtils {
     }
 
     // --- Specific File Type Finders ---
+    
+    /**
+     * Saves the best lyrics to Google Drive.
+     * @param {string} source - The source of the lyrics (e.g., 'apple', 'musixmatch', 'spotify').
+     * @param {string} fileName - The base file name for the lyrics.
+     * @param {object|string} rawData - The raw data fetched from the source.
+     * @param {object} convertedData - The converted lyrics data.
+     * @param {object} gd - Google Drive handler.
+     * @param {string} songTitle - Song title
+     * @param {string} songArtist - Song artist
+     * @param {string} songAlbum - Song album
+     * @param {number} songDuration - Song duration
+     * @param {string|null} songISRC - The ISRC of the song.
+     * @param {string|null} songPlatformId - The platform-specific ID of the song.
+     * @param {object} env - The Hono context environment object.
+     */
+    static async saveBestLyrics(source, fileName, rawData, convertedData, gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, env) {
+        let fileId;
+        try {
+            if (source === 'apple') {
+                const existingFile = await FileUtils.findExistingTTML(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId);
+                if (existingFile) {
+                    fileId = await gd.updateFile(existingFile.id, rawData);
+                } else {
+                    fileId = await gd.uploadFile(
+                        `${fileName}.ttml`,
+                        'application/xml',
+                        rawData,
+                        GDRIVE.CACHED_TTML
+                    );
+                }
+
+            } else if (source === 'musixmatch') {
+                const existingFile = await FileUtils.findExistingFile(
+                    gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.CACHED_MUSIXMATCH, 'application/json'
+                );
+                if (existingFile) {
+                    fileId = await gd.updateFile(existingFile.id, JSON.stringify(rawData));
+                } else {
+                    fileId = await gd.uploadFile(
+                        `${fileName}.json`,
+                        'application/json',
+                        JSON.stringify(rawData),
+                        GDRIVE.CACHED_MUSIXMATCH
+                    );
+                }
+            } else if (source === 'spotify') {
+                const existingFile = await FileUtils.findExistingFile(
+                    gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.CACHED_SPOTIFY, 'application/json'
+                );
+                if (existingFile) {
+                    fileId = await gd.updateFile(existingFile.id, JSON.stringify(rawData));
+                } else {
+                    fileId = await gd.uploadFile(
+                        `${fileName}.json`,
+                        'application/json',
+                        JSON.stringify(rawData),
+                        GDRIVE.CACHED_SPOTIFY
+                    );
+                }
+            } else if (source === 'qq') {
+                const existingFile = await FileUtils.findExistingFile(
+                    gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.CACHED_QQ, 'application/xml'
+                );
+                if (existingFile) {
+                    fileId = await gd.updateFile(existingFile.id, rawData);
+                } else {
+                    fileId = await gd.uploadFile(
+                        `${fileName}.qrc`,
+                        'application/xml',
+                        rawData,
+                        GDRIVE.CACHED_QQ
+                    );
+                }
+            }
+            console.log(`[ASYNC] Successfully saved best lyrics for song ${songTitle} by ${songArtist} from ${source} to Google Drive.`);
+        } catch (error) {
+            console.error(`[ASYNC] Failed to save lyrics from ${source}:`, error);
+        }
+    }
 
     static async findExistingTTML(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId) {
         return this.findExistingFile(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, GDRIVE.CACHED_TTML, 'application/xml');

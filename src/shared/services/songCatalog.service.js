@@ -1,6 +1,7 @@
 import { SpotifyService } from "./spotify.service.js";
 import { AppleMusicService } from "./appleMusic.service.js";
 import { MusixmatchService } from "./musixmatch.service.js";
+import { logger } from '../utils/logger.util.js';
 
 export class SongCatalogService {
     /**
@@ -26,7 +27,7 @@ export class SongCatalogService {
             if (result.status === 'fulfilled') {
                 return result.value;
             } else {
-                console.error("A search service failed:", result.reason);
+                logger.error("A search service failed:", result.reason);
                 return [];
             }
         });
@@ -83,7 +84,7 @@ export class SongCatalogService {
                 songsData.map(song => AppleMusicService.normalizeAppleMusicSong(song, storefront))
             );
         } catch (error) {
-            console.error("Error searching Apple Music:", error);
+            logger.error("Error searching Apple Music:", error);
             return [];
         }
     }
@@ -100,7 +101,7 @@ export class SongCatalogService {
                 spotifyTracks.map(track => SpotifyService.normalizeSpotifySong(track))
             );
         } catch (error) {
-            console.error("Error searching Spotify:", error);
+            logger.error("Error searching Spotify:", error);
             return [];
         }
     }
@@ -118,7 +119,7 @@ export class SongCatalogService {
                 tracksData.map(trackResult => MusixmatchService.normalizeMusixmatchSong(trackResult.track, null, env))
             );
         } catch (error) {
-            console.error("Error searching Musixmatch:", error);
+            logger.error("Error searching Musixmatch:", error);
             return [];
         }
     }

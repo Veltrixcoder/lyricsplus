@@ -3,6 +3,7 @@ import { FileUtils } from "../utils/file.util.js";
 import { SimilarityUtils } from "../utils/similarity.util.js";
 import { spotifyAccountManager } from "../config.js";
 import { convertSpotifyToJSON } from "../parsers/spotify.parser.js";
+import { logger } from '../utils/logger.util.js';
 
 const CACHE = {
     clientId: null,
@@ -31,7 +32,7 @@ export class SpotifyService {
 
     // --- Public API Methods ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, cacheOnly = false) {
         let songTitle = originalSongTitle;
         let songArtist = originalSongArtist;
         let songAlbum = originalSongAlbum;
@@ -66,7 +67,7 @@ export class SpotifyService {
                             };
                         }
                     } catch (error) {
-                        console.warn('Failed to fetch existing Spotify file from GDrive, will refetch.', error);
+                        logger.warn('Failed to fetch existing Spotify file from GDrive, will refetch.', error);
                     }
                 }
                 return null;
@@ -74,14 +75,19 @@ export class SpotifyService {
 
             const initialCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
             if (initialCacheResult) {
-                console.debug('Spotify lyrics found in cache (initial check).');
+                logger.debug('Spotify lyrics found in cache (initial check).');
                 return initialCacheResult;
+            }
+
+            if (cacheOnly) {
+                logger.debug('SpotifyService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+                return null;
             }
 
             // Prioritize ISRC search when available
             let spotifyTracks = null;
             if (songISRC) {
-                console.debug(`Searching Spotify by ISRC: ${songISRC}`);
+                logger.debug(`Searching Spotify by ISRC: ${songISRC}`);
                 try {
                     const isrcSearchQuery = `isrc:${encodeURIComponent(songISRC)}`;
                     const response = await this.makeSpotifyRequest(
@@ -90,10 +96,10 @@ export class SpotifyService {
                     const data = await response.json();
                     spotifyTracks = data.tracks?.items?.length ? data.tracks.items : null;
                     if (spotifyTracks) {
-                        console.debug(`Spotify ISRC search found ${spotifyTracks.length} result(s) for ISRC: ${songISRC}`);
+                        logger.debug(`Spotify ISRC search found ${spotifyTracks.length} result(s) for ISRC: ${songISRC}`);
                     }
                 } catch (error) {
-                    console.warn('Spotify ISRC search failed:', error);
+                    logger.warn('Spotify ISRC search failed:', error);
                 }
             }
 
@@ -101,14 +107,14 @@ export class SpotifyService {
             if (!spotifyTracks) {
                 const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
                 if (isIdOnlySearch) {
-                    console.debug('ISRC search found no match and no title/artist provided. Aborting Spotify search.');
+                    logger.debug('ISRC search found no match and no title/artist provided. Aborting Spotify search.');
                     return null;
                 }
                 spotifyTracks = await this.searchSpotifySong(originalSongTitle, originalSongArtist);
             }
 
             if (!spotifyTracks || spotifyTracks.length === 0) {
-                console.warn('No Spotify tracks found for search query.');
+                logger.warn('No Spotify tracks found for search query.');
                 return null;
             }
 
@@ -131,13 +137,13 @@ export class SpotifyService {
             );
 
             if (!bestMatch) {
-                console.warn('No suitable Spotify track match found.');
+                logger.warn('No suitable Spotify track match found.');
                 return null;
             }
 
             const spotifyTrack = spotifyTracks.find(t => t.id === bestMatch.candidate.id);
             if (!spotifyTrack) {
-                console.warn('Matched Spotify track not found in original search results.');
+                logger.warn('Matched Spotify track not found in original search results.');
                 return null;
             }
 
@@ -148,24 +154,24 @@ export class SpotifyService {
             isrc = spotifyTrack.external_ids?.isrc || null;
             platformId = spotifyTrack.id;
 
-            console.debug(`Selected match: ${songArtist} - ${songTitle} (Album: ${songAlbum}, Duration: ${songDuration}s, ISRC: ${isrc}, PlatformId: ${platformId})`);
+            logger.debug(`Selected match: ${songArtist} - ${songTitle} (Album: ${songAlbum}, Duration: ${songDuration}s, ISRC: ${isrc}, PlatformId: ${platformId})`);
 
             const postSearchCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
             if (postSearchCacheResult) {
-                console.debug('Spotify lyrics found in cache (post-search check).');
+                logger.debug('Spotify lyrics found in cache (post-search check).');
                 return postSearchCacheResult;
             }
 
             const spotifyLyrics = await this.fetchSpotifyLyrics(spotifyTrack.id);
             if (!spotifyLyrics?.lyrics) {
-                console.warn('No lyrics found for Spotify track.');
+                logger.warn('No lyrics found for Spotify track.');
                 return null;
             }
 
             try {
                 spotifyLyrics.lyrics.songWriters = await this.fetchSpotifySongwriters(spotifyTrack.id);
             } catch (error) {
-                console.warn('Failed to fetch songwriters for lyrics:', error);
+                logger.warn('Failed to fetch songwriters for lyrics:', error);
                 spotifyLyrics.lyrics.songWriters = [];
             }
 
@@ -186,7 +192,7 @@ export class SpotifyService {
                 }
             };
         } catch (error) {
-            console.warn('Spotify lyrics fetch failed:', error);
+            logger.warn('Spotify lyrics fetch failed:', error);
             return null;
         }
     }
@@ -229,13 +235,13 @@ export class SpotifyService {
 
             const data = await response.json();
             if (!data?.roleCredits) {
-                console.warn("Spotify track credits response missing roleCredits:", data);
+                logger.warn("Spotify track credits response missing roleCredits:", data);
                 return [];
             }
             const writersRole = data.roleCredits.find(role => role.roleTitle?.toLowerCase() === 'writers');
             return writersRole ? writersRole.artists.map(artist => artist.name) : [];
         } catch (error) {
-            console.error("Error fetching Spotify songwriters:", error);
+            logger.error("Error fetching Spotify songwriters:", error);
             return [];
         }
     }
@@ -295,7 +301,7 @@ export class SpotifyService {
 
             if (!response.ok) {
                 if ((response.status === 401 || response.status === 429) && retries < MAX_RETRIES) {
-                    console.warn(`Spotify API call failed with status ${response.status}. Retrying with next account...`);
+                    logger.warn(`Spotify API call failed with status ${response.status}. Retrying with next account...`);
                     spotifyAccountManager.switchToNextAccount();
                     Object.assign(CACHE, { clientId: null, accessToken: null, spotifyToken: null, tokenExpiry: null });
                     return this.makeSpotifyRequest(url, options, retries + 1);
@@ -305,7 +311,7 @@ export class SpotifyService {
             }
             return response;
         } catch (error) {
-            console.error("Error in makeSpotifyRequest:", error);
+            logger.error("Error in makeSpotifyRequest:", error);
             throw error;
         }
     }
@@ -335,7 +341,7 @@ export class SpotifyService {
             let response = await fetch(`https://open.spotify.com/api/token?${transportParams}`, { headers });
 
             if (!response.ok) {
-                console.warn(`Token request with reason=transport failed (${response.status}). Retrying with reason=init.`);
+                logger.warn(`Token request with reason=transport failed (${response.status}). Retrying with reason=init.`);
                 const initParams = new URLSearchParams({ reason: 'init', productType: 'web-player', totp, totpServer: totp, totpVer: totpVer.toString() });
                 response = await fetch(`https://open.spotify.com/api/token?${initParams}`, { headers });
             }
@@ -347,7 +353,7 @@ export class SpotifyService {
 
             const data = await response.json();
             if (!data.clientId || !data.accessToken) {
-                console.debug("Spotify token response missing critical data:", data);
+                logger.debug("Spotify token response missing critical data:", data);
                 throw new Error("Failed to get Spotify web tokens: Invalid response structure.");
             }
 
@@ -361,7 +367,7 @@ export class SpotifyService {
                 expiry: CACHE.tokenExpiry
             };
         } catch (error) {
-            console.error("Error fetching Spotify web tokens:", error);
+            logger.error("Error fetching Spotify web tokens:", error);
             throw error;
         }
     }
@@ -374,7 +380,7 @@ export class SpotifyService {
 
         const currentAccount = spotifyAccountManager.getCurrentAccount();
         if (!currentAccount) {
-            console.error("No Spotify account available for client credentials authentication.");
+            logger.error("No Spotify account available for client credentials authentication.");
             return null;
         }
 
@@ -398,7 +404,7 @@ export class SpotifyService {
                 throw new Error("Failed to get Spotify token: access_token not in response.");
             }
         } catch (error) {
-            console.error("Error fetching Spotify auth token:", error);
+            logger.error("Error fetching Spotify auth token:", error);
             return null;
         }
     }
@@ -456,7 +462,7 @@ export class SpotifyService {
     }
 
     static async updateSecrets() {
-        console.debug("Attempting to update Spotify TOTP secrets...");
+        logger.debug("Attempting to update Spotify TOTP secrets...");
         try {
             const response = await fetch(SECRET_CIPHER_DICT_URL);
             if (!response.ok) throw new Error(`Failed to fetch secrets, status: ${response.status}`);
@@ -465,12 +471,12 @@ export class SpotifyService {
             if (typeof newSecrets === 'object' && Object.keys(newSecrets).length > 0) {
                 SECRET_CACHE.dict = newSecrets;
                 SECRET_CACHE.lastUpdated = Date.now();
-                console.debug("Successfully updated Spotify TOTP secrets.");
+                logger.debug("Successfully updated Spotify TOTP secrets.");
             } else {
                 throw new Error("Fetched secrets data is invalid.");
             }
         } catch (error) {
-            console.warn(`Could not update Spotify secrets. Using cached/fallback version. Reason: ${error.message}`);
+            logger.warn(`Could not update Spotify secrets. Using cached/fallback version. Reason: ${error.message}`);
         }
     }
 

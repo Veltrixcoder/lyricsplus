@@ -1,6 +1,6 @@
 import { SignJWT, jwtVerify } from "jose";
 import { LyricsPlusService } from "../../shared/services/lyricsPlus.service.js";
-import { JWT_SECRET } from "../../shared/config.js";
+import { LYRICSPLUS } from "../../shared/config.js";
 import GoogleDrive from "../../shared/utils/googleDrive.util.js";
 
 const gd = new GoogleDrive();
@@ -38,13 +38,13 @@ async function verifyProofOfWork(challenge, nonce, difficulty) {
 }
 
 export async function handleChallenge(c) {
-    if (!JWT_SECRET) {
+    if (!LYRICSPLUS.JWT_SECRET) {
         console.error("CRITICAL: JWT_SECRET is not configured in config.js.");
         return c.json({ error: "Server configuration error" }, 500);
     }
 
     const challenge = crypto.randomUUID();
-    const token = await createChallengeToken(challenge, JWT_SECRET);
+    const token = await createChallengeToken(challenge, LYRICSPLUS.JWT_SECRET);
 
     return c.json({
         token,
@@ -54,6 +54,10 @@ export async function handleChallenge(c) {
 
 export async function handleSubmit(c) {
     try {
+        if(!LYRICSPLUS.ALLOW_SUBMISSIONS) {
+            return c.json({ error: "Submissions are currently disabled" }, 503);
+        }
+        
         const payload = await c.req.json();
         const { proofOfWorkToken, nonce, ...lyricsSubmitData } = payload;
 
@@ -61,12 +65,12 @@ export async function handleSubmit(c) {
             return c.json({ error: "Missing proof of work" }, 400);
         }
 
-        if (!JWT_SECRET) {
+        if (!LYRICSPLUS.JWT_SECRET) {
             console.error("CRITICAL: JWT_SECRET is not configured in config.js.");
             return c.json({ error: "Server configuration error" }, 500);
         }
 
-        const challengePayload = await verifyChallengeToken(proofOfWorkToken, JWT_SECRET);
+        const challengePayload = await verifyChallengeToken(proofOfWorkToken, LYRICSPLUS.JWT_SECRET);
         if (!challengePayload) {
             return c.json({ error: "Invalid or expired proof of work token" }, 400);
         }

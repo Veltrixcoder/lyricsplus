@@ -26,7 +26,7 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `title` (conditional): The title of the song. Required if `isrc` and `platformId` are not provided.
         *   `artist` (conditional): The artist of the song. Required if `isrc` and `platformId` are not provided.
         *   `album` (optional): The album of the song.
-        *   `duration` (optional): The duration of the song in milliseconds.
+        *   `duration` (optional): The duration of the song in seconds format (for miliseconds use decimals, e.g 232.123).
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
@@ -39,7 +39,7 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `title` (conditional): The title of the song. Required if `isrc` and `platformId` are not provided.
         *   `artist` (conditional): The artist of the song. Required if `isrc` and `platformId` are not provided.
         *   `album` (optional): The album of the song.
-        *   `duration` (optional): The duration of the song in milliseconds.
+        *   `duration` (optional): The duration of the song in seconds format (for miliseconds use decimals, e.g 232.123).
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
@@ -52,7 +52,7 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `title` (conditional): The title of the song. Required if `isrc` and `platformId` are not provided.
         *   `artist` (conditional): The artist of the song. Required if `isrc` and `platformId` are not provided.
         *   `album` (optional): The album of the song.
-        *   `duration` (optional): The duration of the song in milliseconds.
+        *   `duration` (optional): The duration of the song in seconds format (for miliseconds use decimals, e.g 232.123).
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).
@@ -65,7 +65,7 @@ This approach ensures that providing an `isrc` or `platformId` alongside `title`
         *   `title` (conditional): The title of the song. Required if `isrc` and `platformId` are not provided.
         *   `artist` (conditional): The artist of the song. Required if `isrc` and `platformId` are not provided.
         *   `album` (optional): The album of the song.
-        *   `duration` (optional): The duration of the song in milliseconds.
+        *   `duration` (optional): The duration of the song in seconds format (for miliseconds use decimals, e.g 232.123).
         *   `isrc` (conditional): The ISRC of the song. Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `platformId` (conditional): The platform-specific ID of the song (e.g., Apple Music ID, Musixmatch Track ID, Spotify Song ID, QQ Music Mid). Can be used as an alternative to `title` and `artist` for cached lookups.
         *   `source` (optional): Comma-separated list of preferred lyric sources (e.g., `musixmatch,spotify,qq`).

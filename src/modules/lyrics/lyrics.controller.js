@@ -1,148 +1,58 @@
-
 import { AppleMusicService } from "../../shared/services/appleMusic.service.js";
 import { MusixmatchService } from "../../shared/services/musixmatch.service.js";
 import { SpotifyService } from "../../shared/services/spotify.service.js";
 import { QQService } from "../../shared/services/qq.service.js";
 import { LyricsPlusService } from "../../shared/services/lyricsPlus.service.js";
+import { QapleService } from "../../shared/services/qaple.service.js";
 import { FileUtils } from "../../shared/utils/file.util.js";
 import { GDRIVE } from "../../shared/config.js";
 import GoogleDrive from "../../shared/utils/googleDrive.util.js";
 
+import { logger } from '../../shared/utils/logger.util.js';
+
 const gd = new GoogleDrive();
 
-export async function fetchSongs(env) {
-    let songs = await env.SONGS_KV.get('songList', { type: 'json' });
-    if (!songs) {
-        console.debug('Song list not found in KV, fetching from Google Drive...');
-        const fileContent = await gd.fetchFile(GDRIVE.SONGS_FILE_ID);
-        if (typeof fileContent === "string" && (fileContent.trim().startsWith("{") || fileContent.trim().startsWith("["))) {
-            songs = JSON.parse(fileContent || "[]");
-        } else {
-            songs = fileContent || [];
-        }
-        await env.SONGS_KV.put('songList', JSON.stringify(songs));
-        console.debug('Song list fetched from Google Drive and stored in KV.');
-    } else {
-        console.debug('Song list fetched from KV.');
-    }
-    return songs;
-}
 
-export async function safeFetchSongs(env) {
-    try {
-        return await fetchSongs(env);
-    } catch (error) {
-        console.warn("fetchSongs() failed, attempting to reload from cache:", error);
-        return [];
+function raceWithEarlyExit(promises, getPriority, threshold) {
+    if (promises.length === 0) {
+        return Promise.resolve({ winner: null, all: [] });
     }
-}
+    
+    return new Promise((resolve) => {
+        const results = new Array(promises.length).fill(undefined);
+        const pending = new Set(promises.map((_, i) => i));
+        let won = false;
 
-/**
- * Saves the best lyrics to Google Drive and updates the KV store.
- * @param {string} source - The source of the lyrics (e.g., 'apple', 'musixmatch', 'spotify').
- * @param {string} fileName - The base file name for the lyrics.
- * @param {object|string} rawData - The raw data fetched from the source (e.g., TTML, Spotify JSON, Musixmatch JSON).
- * @param {object} convertedData - The converted lyrics data in LyricsPlus format.
- * @param {object} existingFile - Information about an existing file in Google Drive, if found.
- * @param {object} gd - Google Drive handler.
- * @param {object} songTitle - Song title
- * @param {object} songArtist - Song artist
- * @param {object} songAlbum - Song album
- * @param {object} songDuration - Song duration
- * @param {string|null} songISRC - The ISRC of the song.
- * @param {string|null} songPlatformId - The platform-specific ID of the song.
- * @param {object} songs - Cached songs list
- * @param {object} env - The Hono context environment object.
- */
-async function saveBestLyrics(source, fileName, rawData, convertedData, gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, songs, env) {
-    let fileId;
-    try {
-        if (source === 'apple') {
-            const existingFile = await FileUtils.findExistingTTML(gd, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId);
-            if (existingFile) {
-                fileId = await gd.updateFile(existingFile.id, rawData);
-            } else {
-                fileId = await gd.uploadFile(
-                    `${fileName}.ttml`,
-                    'application/xml',
-                    rawData,
-                    GDRIVE.CACHED_TTML
-                );
+        const tryResolve = () => {
+            if (won) return;
+
+            const bestIdx = results.findIndex(
+                (r, i) => !pending.has(i) && r && getPriority(r) >= threshold
+            );
+
+            if (bestIdx === -1) {
+                if (pending.size === 0) resolve({ winner: null, all: results });
+                return;
             }
 
-        } else if (source === 'musixmatch') {
-            const existingFile = await FileUtils.findExistingFile(
-                gd,
-                songTitle,
-                songArtist,
-                songAlbum,
-                songDuration,
-                songISRC,
-                songPlatformId,
-                GDRIVE.CACHED_MUSIXMATCH,
-                'application/json'
-            );
-            if (existingFile) {
-                fileId = await gd.updateFile(existingFile.id, JSON.stringify(rawData));
-            } else {
-                fileId = await gd.uploadFile(
-                    `${fileName}.json`,
-                    'application/json',
-                    JSON.stringify(rawData),
-                    GDRIVE.CACHED_MUSIXMATCH
-                );
-            }
-        }
-        else if (source === 'spotify') {
-            const existingFile = await FileUtils.findExistingFile(
-                gd,
-                songTitle,
-                songArtist,
-                songAlbum,
-                songDuration,
-                songISRC,
-                songPlatformId,
-                GDRIVE.CACHED_SPOTIFY,
-                'application/json'
-            );
-            if (existingFile) {
-                fileId = await gd.updateFile(existingFile.id, JSON.stringify(rawData));
-            } else {
-                fileId = await gd.uploadFile(
-                    `${fileName}.json`,
-                    'application/json',
-                    JSON.stringify(rawData),
-                    GDRIVE.CACHED_SPOTIFY
-                );
-            }
-        }
-        else if (source === 'qq') {
-            const existingFile = await FileUtils.findExistingFile(
-                gd,
-                songTitle,
-                songArtist,
-                songAlbum,
-                songDuration,
-                songISRC,
-                songPlatformId,
-                GDRIVE.CACHED_QQ,
-                'application/xml' // Or text/plain, keeping standard with GDrive APIs
-            );
-            if (existingFile) {
-                fileId = await gd.updateFile(existingFile.id, rawData);
-            } else {
-                fileId = await gd.uploadFile(
-                    `${fileName}.qrc`,
-                    'application/xml',
-                    rawData,
-                    GDRIVE.CACHED_QQ
-                );
-            }
-        }
-        console.debug(`Successfully saved best lyrics from ${source} to Google Drive.`);
-    } catch (error) {
-        console.error(`Failed to save lyrics from ${source}:`, error);
-    }
+            const blockedByEarlier = [...pending].some(i => i < bestIdx);
+            if (blockedByEarlier) return;
+
+            won = true;
+            resolve({ winner: results[bestIdx], all: results });
+        };
+
+        promises.forEach((p, i) => {
+            Promise.resolve(p)
+                .catch(e => { logger.error(`Fetch error:`, e); return null; })
+                .then(result => {
+                    if (won) return;
+                    results[i] = result;
+                    pending.delete(i);
+                    tryResolve();
+                });
+        });
+    });
 }
 
 export async function handleSongLyrics(
@@ -152,22 +62,21 @@ export async function handleSongLyrics(
     songDuration = "",
     songISRC = null,
     songPlatformId = null,
-    songs,
     gd,
     preferredSources = [],
     forceReload = false,
     env
 ) {
     const initialFileName = await FileUtils.generateUniqueFileName(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId);
-    console.debug('Looking for:', initialFileName, forceReload ? '(Force reload enabled)' : '');
+    logger.debug('Looking for:', initialFileName, forceReload ? '(Force reload enabled)' : '');
 
     let sources;
     const isIdOnlySearch = (!songTitle || !songArtist) && (songISRC || songPlatformId);
 
     if (isIdOnlySearch) {
-        sources = ['apple', 'lyricsplus', 'qq', 'musixmatch', 'spotify'];
+        sources = ['apple', 'lyricsplus', 'qq', 'musixmatch'];
     } else {
-        sources = preferredSources.length > 0 ? preferredSources : ['apple', 'lyricsplus', 'qq', 'musixmatch-word', 'musixmatch', 'spotify'];
+        sources = preferredSources.length > 0 ? preferredSources : ['apple', 'lyricsplus', 'qq', 'musixmatch-word', 'musixmatch'];
     }
 
     const getSyncPriority = (result) => {
@@ -183,7 +92,7 @@ export async function handleSongLyrics(
             return 1;
         }
 
-        if (sourceType.includes('apple') || sourceType.includes('lyricsplus')) {
+        if (sourceType.includes('apple') || sourceType.includes('lyricsplus') || sourceType.includes('qaple')) {
             return FileUtils.hasSyllableSync(data) ? 3 : syncType == 'LINE' ? 2 : 1;
         }
     };
@@ -191,22 +100,35 @@ export async function handleSongLyrics(
     const fetchSource = (source) => {
         switch (source) {
             case 'apple':
-                console.debug(`Attempting AppleMusic Fetch`);
-                return AppleMusicService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, songs, gd, forceReload, sources);
+                logger.debug(`Attempting AppleMusic Fetch`);
+                return AppleMusicService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, sources);
             case 'lyricsplus':
-                console.debug(`Attempting LyricsPlus Fetch`);
-                return LyricsPlusService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd);
+                return (async () => {
+                    logger.debug(`Attempting LyricsPlus Fetch`);
+                    const lpResult = await LyricsPlusService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd);
+                    if (lpResult && getSyncPriority(lpResult) === 3) {
+                        return lpResult;
+                    }
+                    logger.debug(`Attempting Qaple Fetch (as part of LyricsPlus fallback)`);
+                    const qapleResult = await QapleService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, sources);
+
+                    // Only prefer qaple if it's actually better than what LyricsPlus found
+                    if (qapleResult && getSyncPriority(qapleResult) > getSyncPriority(lpResult)) {
+                        return qapleResult;
+                    }
+                    return lpResult;
+                })();
             case 'musixmatch-word':
-                console.debug(`Attempting MusixMatch (Word Sync) Fetch`);
+                logger.debug(`Attempting MusixMatch (Word Sync) Fetch`);
                 return MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, true);
             case 'musixmatch':
-                console.debug(`Attempting MusixMatch (Line/Any Sync) Fetch`);
+                logger.debug(`Attempting MusixMatch (Line/Any Sync) Fetch`);
                 return MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env, false);
             case 'spotify':
-                console.debug(`Attempting Spotify (as MusixMatch alt) Fetch`);
+                logger.debug(`Attempting Spotify (as MusixMatch alt) Fetch`);
                 return SpotifyService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload);
             case 'qq':
-                console.debug(`Attempting QQ Fetch`);
+                logger.debug(`Attempting QQ Fetch`);
                 return QQService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, gd, forceReload, env);
             default:
                 return Promise.resolve(null);
@@ -223,8 +145,8 @@ export async function handleSongLyrics(
 
         const finalFileName = await FileUtils.generateUniqueFileName(exactSongTitle, exactSongArtist, exactSongAlbum, exactSongDuration, exactSongISRC, exactSongPlatformId);
 
-        if (result.rawData && result.data.cached !== 'GDrive' && result.data.cached !== 'Database') {
-            saveBestLyrics(
+        if (result.rawData && result.data.cached !== 'GDrive' && result.data.cached !== 'Database' && result.source !== 'qaple') {
+            FileUtils.saveBestLyrics(
                 result.source.toLowerCase().replace('-word', ''),
                 finalFileName,
                 result.rawData,
@@ -236,90 +158,82 @@ export async function handleSongLyrics(
                 exactSongDuration,
                 exactSongISRC,
                 exactSongPlatformId,
-                songs,
                 env
             );
         }
     };
 
+    const isValidResult = (r) => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0;
+
     const firstTwoSources = sources.slice(0, 2);
     const firstTwoPromises = firstTwoSources.map(source => fetchSource(source));
 
-    const firstTwoResults = await Promise.all(firstTwoPromises.map(p => p.catch(e => {
-        console.error(`Error fetching from one of the first two sources:`, e);
-        return null;
-    })));
+    const { winner: earlyWinner, all: firstTwoResults } = await raceWithEarlyExit(
+        firstTwoPromises,
+        (r) => isValidResult(r) ? getSyncPriority(r) : 0,
+        3
+    );
 
-    const successfulFirstTwoResults = firstTwoResults.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0);
+    if (earlyWinner) {
+        await saveResult(earlyWinner);
+        return earlyWinner;
+    }
 
-    if (successfulFirstTwoResults.length > 0) {
-        const bestFirstTwo = successfulFirstTwoResults.reduce((best, current) => {
-            const bestPriority = getSyncPriority(best);
-            const currentPriority = getSyncPriority(current);
-            return currentPriority > bestPriority ? current : best;
-        });
+    const successfulFirstTwo = firstTwoResults.filter(isValidResult);
 
+    if (successfulFirstTwo.length > 0) {
+        const bestFirstTwo = successfulFirstTwo.reduce((best, cur) =>
+            getSyncPriority(cur) > getSyncPriority(best) ? cur : best
+        );
         const bestPriority = getSyncPriority(bestFirstTwo);
 
-        if (bestPriority === 3) {
-            console.debug(`Found word/syllable sync lyrics from first two sources: ${bestFirstTwo.source}`);
-            await saveResult(bestFirstTwo);
-            return bestFirstTwo;
-        }
-
         if (bestPriority === 2) {
-            console.debug(`Found line sync lyrics from first two sources, checking for word sync in remaining sources`);
-
+            logger.debug(`Found line sync from first two sources, checking for word sync in remaining sources`);
             const remainingSources = sources.slice(2).filter(s => s !== 'musixmatch' && s !== 'spotify');
 
             if (remainingSources.length > 0) {
-                const remainingPromises = remainingSources.map(source => fetchSource(source));
-                const remainingResults = await Promise.all(remainingPromises.map(p => p.catch(e => {
-                    console.error(`Error fetching from remaining source:`, e);
-                    return null;
-                })));
+                const { winner: remainingWinner, all: remainingResults } = await raceWithEarlyExit(
+                    remainingSources.map(source => fetchSource(source)),
+                    (r) => isValidResult(r) ? getSyncPriority(r) : 0,
+                    3
+                );
 
-                const successfulRemainingResults = remainingResults.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0);
-
-                if (successfulRemainingResults.length > 0) {
-                    const bestRemaining = successfulRemainingResults.reduce((best, current) => {
-                        const bestPriority = getSyncPriority(best);
-                        const currentPriority = getSyncPriority(current);
-                        return currentPriority > bestPriority ? current : best;
-                    });
-
-                    if (getSyncPriority(bestRemaining) === 3) {
-                        console.debug(`Found word sync from remaining sources: ${bestRemaining.source}`);
-                        await saveResult(bestRemaining);
-                        return bestRemaining;
-                    }
+                if (remainingWinner) {
+                    logger.debug(`Found word sync from remaining sources: ${remainingWinner.source}`);
+                    await saveResult(remainingWinner);
+                    return remainingWinner;
                 }
             }
 
-            console.debug(`Using line sync result from first two sources: ${bestFirstTwo.source}`);
+            logger.debug(`Using line sync result from first two sources: ${bestFirstTwo.source}`);
             await saveResult(bestFirstTwo);
             return bestFirstTwo;
         }
     }
 
-    console.debug('No suitable lyrics from first two sources or priority <= 1, fetching all remaining sources');
+    logger.debug('No suitable lyrics from first two sources or priority <= 1, fetching all remaining sources');
     const remainingSources = sources.slice(2);
-    const promises = remainingSources.map(source => fetchSource(source));
 
-    const results = await Promise.all(promises.map(p => p.catch(e => {
-        console.error(`Error fetching from remaining source:`, e);
-        return null;
-    })));
+    const { winner: remainingEarlyWinner, all: remainingResults } = await raceWithEarlyExit(
+        remainingSources.map(source => fetchSource(source)),
+        (r) => isValidResult(r) ? getSyncPriority(r) : 0,
+        3
+    );
 
-    const allSuccessfulResults = [...successfulFirstTwoResults, ...results.filter(r => r && r.success && r.data && r.data.lyrics && r.data.lyrics.length > 0)];
+    if (remainingEarlyWinner) {
+        await saveResult(remainingEarlyWinner);
+        return remainingEarlyWinner;
+    }
 
-    if (allSuccessfulResults.length > 0) {
-        const bestResult = allSuccessfulResults.reduce((best, current) => {
-            const bestPriority = getSyncPriority(best);
-            const currentPriority = getSyncPriority(current);
-            return currentPriority > bestPriority ? current : best;
-        });
+    const allSuccessful = [
+        ...successfulFirstTwo,
+        ...remainingResults.filter(isValidResult)
+    ];
 
+    if (allSuccessful.length > 0) {
+        const bestResult = allSuccessful.reduce((best, cur) =>
+            getSyncPriority(cur) > getSyncPriority(best) ? cur : best
+        );
         await saveResult(bestResult);
         return bestResult;
     }

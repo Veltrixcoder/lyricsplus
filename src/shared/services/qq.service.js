@@ -4,6 +4,7 @@ import { fetchWithTimeout } from '../utils/timeout.util.js';
 import { FileUtils } from '../utils/file.util.js';
 import { SimilarityUtils } from '../utils/similarity.util.js';
 import crypto from 'crypto';
+import { logger } from '../utils/logger.util.js';
 
 const API_CONFIG = {
     versionCode: 13020508,
@@ -14,7 +15,7 @@ export class QQService {
 
     // --- Public API ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, cacheOnly = false) {
         let songTitle = originalSongTitle;
         let songArtist = originalSongArtist;
         let songAlbum = originalSongAlbum;
@@ -24,6 +25,7 @@ export class QQService {
 
         try {
             const checkCache = async (title, artist, album, duration, isrc, platformId) => {
+                logger.debug('QQService: Checking cache for QQ lyrics...');
                 let existingFile;
                 const isIdOnlySearch = (!title || !artist) && (isrc || platformId);
 
@@ -53,25 +55,31 @@ export class QQService {
                             }
                         }
                     } catch (error) {
-                        console.warn('Failed to fetch existing QQ file from GDrive, will refetch.', error);
+                        logger.warn('Failed to fetch existing QQ file from GDrive, will refetch.', error);
                     }
                 }
+                logger.debug('QQ lyrics not found in cache (initial check).');
                 return null;
             };
 
             const initialCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
             if (initialCacheResult) {
-                console.debug('QQ lyrics found in cache (initial check).');
+                logger.debug('QQ lyrics found in cache (initial check).');
                 return initialCacheResult;
+            }
+
+            if (cacheOnly) {
+                logger.debug('QQService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+                return null;
             }
 
             const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
             if (isIdOnlySearch) {
-                console.debug('ID-only search failed to find a cache match. Aborting QQ search.');
+                logger.debug('ID-only search failed to find a cache match. Aborting QQ search.');
                 return null;
             }
 
-            console.debug('Searching QQ Music for lyrics...');
+            logger.debug('Searching QQ Music for lyrics...');
 
             // Step 1: Search for the song
             const query = [originalSongTitle, originalSongArtist].filter(Boolean).join(' ');
@@ -95,7 +103,7 @@ export class QQService {
 
             const items = searchData.body?.item_song || [];
             if (items.length === 0) {
-                console.warn('No suitable match found in QQ Music search.');
+                logger.warn('No suitable match found in QQ Music search.');
                 return null;
             }
 
@@ -114,7 +122,7 @@ export class QQService {
 
             const bestMatchWrap = SimilarityUtils.findBestSongMatch(candidates, songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId);
             if (!bestMatchWrap) {
-                console.warn('No suitable match found in QQ Music search after similarity check.');
+                logger.warn('No suitable match found in QQ Music search after similarity check.');
                 return null;
             }
 
@@ -138,7 +146,7 @@ export class QQService {
 
             const postSearchCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
             if (postSearchCacheResult) {
-                console.debug('QQ lyrics found in cache (post-search check).');
+                logger.debug('QQ lyrics found in cache (post-search check).');
                 return postSearchCacheResult;
             }
 
@@ -175,7 +183,7 @@ export class QQService {
             }
 
             if (!qrcContent) {
-                console.warn('Lyrics string empty in QQ API response.');
+                logger.warn('Lyrics string empty in QQ API response.');
                 return null;
             }
 
@@ -183,7 +191,7 @@ export class QQService {
             const convertedToJson = convertQQToJSON(qrcContent, exactMetadata);
 
             if (!convertedToJson || !convertedToJson.lyrics || convertedToJson.lyrics.length === 0) {
-                console.warn('QQ lyrics parsing resulted in empty array.');
+                logger.warn('QQ lyrics parsing resulted in empty array.');
                 return null;
             }
 
@@ -192,14 +200,18 @@ export class QQService {
             convertedToJson.metadata.title = exactMetadata.title;
             convertedToJson.metadata.artist = exactMetadata.artist;
             convertedToJson.metadata.album = exactMetadata.album;
-            convertedToJson.metadata.durationMs = exactMetadata.durationMs;
+
+            const durMs = (exactMetadata.durationMs || 0)
+            const tMin = Math.floor(durMs / 60000)
+            const tSec = ((durMs % 60000) / 1000).toFixed(3)
+            convertedToJson.metadata.totalDuration = tMin + ':' + String(tSec).padStart(6, '0')
 
             convertedToJson.cached = 'None';
 
             return { success: true, data: convertedToJson, source: 'QQ', rawData: qrcContent, exactMetadata };
 
         } catch (error) {
-            console.warn('QQ Music lyrics fetch failed:', error);
+            logger.warn('QQ Music lyrics fetch failed:', error);
             return null;
         }
     }
@@ -296,7 +308,7 @@ export class QQService {
         try {
             data = JSON.parse(responseText);
         } catch (e) {
-            console.error("QQ API returned non-JSON response:", responseText.substring(0, 200));
+            logger.error("QQ API returned non-JSON response:", responseText.substring(0, 200));
             throw new Error(`Invalid response structure (not JSON), status: ${response.status || 'unknown'}`);
         }
 
@@ -342,7 +354,7 @@ export class QQService {
                 const decrypted = await qrc_decrypt(content);
                 return decrypted || "";
             } catch (e) {
-                console.warn("Lyric decryption failed:", e.message);
+                logger.warn("Lyric decryption failed:", e.message);
                 return "";
             }
         }

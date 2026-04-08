@@ -3,28 +3,35 @@ import { convertTTMLtoJSON } from "../parsers/ttml.parser.js";
 import { SimilarityUtils } from "../utils/similarity.util.js";
 import { FileUtils } from "../utils/file.util.js";
 import { LyricsPlusService } from "./lyricsPlus.service.js";
+import { logger } from '../utils/logger.util.js';
 
 const CACHE = { storefront: null, authToken: null };
 const MAX_RETRIES = 3;
+const SUGGESTIONS_BASE_URL = 'https://amp-api-edge.music.apple.com/v1';
 
 export class AppleMusicService {
 
     // --- Public API ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, songs, gd, forceReload, sources) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, sources, cacheOnly = false) {
         try {
-            const initialCacheResult = await this._checkCache(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, songs, gd, forceReload, sources);
+            const initialCacheResult = await this._checkCache(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, sources);
             if (initialCacheResult) {
-                console.debug('Apple Music lyrics found in cache (initial check).');
+                logger.debug('Apple Music lyrics found in cache (initial check).');
                 return initialCacheResult;
             }
 
-            console.debug('No cached lyrics found, searching Apple Music...');
+            if (cacheOnly) {
+                logger.debug('AppleMusicService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+                return null;
+            }
+
+            logger.debug('No cached lyrics found, searching Apple Music...');
 
             // Prioritize ISRC search when available
             let bestMatch = null;
             if (songISRC) {
-                console.debug(`Searching Apple Music by ISRC: ${songISRC}`);
+                logger.debug(`Searching Apple Music by ISRC: ${songISRC}`);
                 bestMatch = await this._searchByIsrc(songISRC);
             }
 
@@ -32,26 +39,31 @@ export class AppleMusicService {
             if (!bestMatch) {
                 const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
                 if (isIdOnlySearch) {
-                    console.debug('ISRC search found no match and no title/artist provided. Aborting Apple Music search.');
+                    logger.debug('ISRC search found no match and no title/artist provided. Aborting Apple Music search.');
                     return null;
                 }
                 bestMatch = await this._searchForBestMatch(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration);
             }
 
             if (!bestMatch) {
-                console.warn('No suitable match found in Apple Music search.');
+                logger.warn('No suitable match found in Apple Music search.');
                 return null;
             }
 
             const { name, artistName, albumName, durationInMillis, isrc } = bestMatch.attributes;
             const appleMusicId = bestMatch.id;
             const exactMetadata = { title: name, artist: artistName, album: albumName, durationMs: durationInMillis, isrc: isrc, platformId: appleMusicId };
-            console.debug(`Selected match: ${artistName} - ${name} (Album: ${albumName}, Duration: ${durationInMillis / 1000}s, ISRC: ${isrc}, AppleMusicId: ${appleMusicId})`);
+            logger.debug(`Selected match: ${artistName} - ${name} (Album: ${albumName}, Duration: ${durationInMillis / 1000}s, ISRC: ${isrc}, AppleMusicId: ${appleMusicId})`);
 
-            const postSearchCacheResult = await this._checkCache(name, artistName, albumName, durationInMillis / 1000, isrc, appleMusicId, songs, gd, forceReload, sources);
+            const postSearchCacheResult = await this._checkCache(name, artistName, albumName, durationInMillis / 1000, isrc, appleMusicId, gd, forceReload, sources);
             if (postSearchCacheResult) {
-                console.debug('Apple Music lyrics found in cache (post-search check).');
+                logger.debug('Apple Music lyrics found in cache (post-search check).');
                 return postSearchCacheResult;
+            }
+
+            if (bestMatch.attributes?.hasLyrics === false) {
+                logger.debug(`Apple Music song has no lyrics (hasLyrics=false): ${artistName} - ${name}`);
+                return null;
             }
 
             const storefront = await this.getStorefront();
@@ -62,13 +74,13 @@ export class AppleMusicService {
             const ttml = lyricsData.data?.[0]?.attributes?.ttml || lyricsData.data?.[0]?.attributes?.ttmlLocalizations;
 
             if (!ttml) {
-                console.warn('Lyrics TTML not found in API response.');
+                logger.warn('Lyrics TTML not found in API response.');
                 return null;
             }
 
             const convertedToJson = convertTTMLtoJSON(ttml);
             if (!convertedToJson.lyrics || convertedToJson.lyrics.length === 0) {
-                console.warn('Fetched lyrics are empty.');
+                logger.warn('Fetched lyrics are empty.');
                 return null;
             }
 
@@ -79,7 +91,7 @@ export class AppleMusicService {
             return { success: true, data: convertedToJson, source: 'apple', rawData: ttml, exactMetadata };
 
         } catch (error) {
-            console.warn('Failed to fetch from Apple Music:', error);
+            logger.warn('Failed to fetch from Apple Music:', error);
             return null;
         }
     }
@@ -92,27 +104,75 @@ export class AppleMusicService {
         return response.json();
     }
 
+    /**
+     * Searches via the suggestions endpoint, which has more relaxed rate limits than the
+     * standard search endpoint. Songs are returned pre-hydrated in `resources.songs`,
+     * so no follow-up requests are needed.
+     *
+     * @returns {Array} Song objects matching Apple Music's song schema.
+     */
+    static async searchSongBySuggestions(query, storefront) {
+        if (!query) return [];
+
+        const params = new URLSearchParams({
+            'art[url]': 'f',
+            'fields[albums]': 'artistName,artwork,contentRating,name,playParams,url',
+            'fields[artists]': 'url,name,artwork',
+            'format[resources]': 'map',
+            kinds: 'topResults',
+            l: 'en-US',
+            'limit[results:topResults]': '10',
+            'omit[resource]': 'autos',
+            platform: 'web',
+            term: query,
+            types: 'songs',
+            with: 'naturalLanguage',
+        });
+
+        const url = `${SUGGESTIONS_BASE_URL}/catalog/${storefront}/search/suggestions?${params.toString()}`;
+        const response = await this.makeAppleMusicRequest(url, {});
+        const data = await response.json();
+
+        const songResources = data.resources?.songs || {};
+        const suggestions = data.results?.suggestions || [];
+
+        // Extract song IDs from topResults suggestions, then look them up in the resource map
+        const songs = suggestions
+            .filter(s => s.kind === 'topResults' && s.content?.type === 'songs')
+            .map(s => songResources[s.content.id])
+            .filter(Boolean);
+
+        logger.debug(`Apple Music suggestions search found ${songs.length} song(s) for query: "${query}"`);
+        return songs;
+    }
+
     // --- Core Request & Auth Logic ---
 
-    static async makeAppleMusicRequest(url, options, retries = 0) {
+    static async makeAppleMusicRequest(url, options, retries = 0, rateLimitRetries = 0) {
         try {
             const headers = await this._getAuthHeaders();
             const response = await fetch(url, { ...options, headers: { ...headers, ...options.headers } });
 
             if (!response.ok) {
+                if (response.status === 503 && rateLimitRetries < MAX_RETRIES) {
+                    const delay = 500 + Math.random() * 1500;
+                    logger.warn(`Apple Music 503 rate limit, retrying in ${Math.round(delay)}ms (attempt ${rateLimitRetries + 1}/${MAX_RETRIES})...`);
+                    await new Promise(r => setTimeout(r, delay));
+                    return this.makeAppleMusicRequest(url, options, retries, rateLimitRetries + 1);
+                }
                 if ((response.status === 401 || response.status === 429) && retries < MAX_RETRIES) {
-                    console.warn(`Apple Music API call failed with status ${response.status}. Retrying with next account...`);
+                    logger.warn(`Apple Music API call failed with status ${response.status}. Retrying with next account...`);
                     appleMusicAccountManager.switchToNextAccount();
                     CACHE.authToken = null;
                     CACHE.storefront = null;
-                    return this.makeAppleMusicRequest(url, options, retries + 1);
+                    return this.makeAppleMusicRequest(url, options, retries + 1, 0);
                 }
                 const errorText = await response.text();
                 throw new Error(`Apple Music API returned status ${response.status}: ${errorText}`);
             }
             return response;
         } catch (error) {
-            console.error("Error in makeAppleMusicRequest:", error);
+            logger.error("Error in makeAppleMusicRequest:", error);
             throw error;
         }
     }
@@ -143,7 +203,7 @@ export class AppleMusicService {
             CACHE.authToken = tokenValueMatch[1];
             return CACHE.authToken;
         } catch (error) {
-            console.error("Error scraping Apple Music auth token:", error);
+            logger.error("Error scraping Apple Music auth token:", error);
             throw error;
         }
     }
@@ -164,7 +224,7 @@ export class AppleMusicService {
             CACHE.storefront = data.data[0].id;
         } catch (err) {
             CACHE.storefront = currentAccount.STOREFRONT || "us";
-            console.warn(`Could not fetch storefront, falling back to: ${CACHE.storefront}`);
+            logger.warn(`Could not fetch storefront, falling back to: ${CACHE.storefront}`);
         }
         return CACHE.storefront;
     }
@@ -177,7 +237,7 @@ export class AppleMusicService {
             const data = await response.json();
             return data.data?.[0]?.attributes || null;
         } catch (error) {
-            console.error("Error fetching Apple Music song details:", error);
+            logger.error("Error fetching Apple Music song details:", error);
             return null;
         }
     }
@@ -235,13 +295,13 @@ export class AppleMusicService {
             const data = await response.json();
             const songs = data.data || [];
             if (songs.length > 0) {
-                console.debug(`Apple Music ISRC search found ${songs.length} result(s) for ISRC: ${isrc}`);
+                logger.debug(`Apple Music ISRC search found ${songs.length} result(s) for ISRC: ${isrc}`);
                 return songs[0];
             }
-            console.debug(`Apple Music ISRC search found no results for ISRC: ${isrc}`);
+            logger.debug(`Apple Music ISRC search found no results for ISRC: ${isrc}`);
             return null;
         } catch (error) {
-            console.warn('Apple Music ISRC search failed:', error);
+            logger.warn('Apple Music ISRC search failed:', error);
             return null;
         }
     }
@@ -255,9 +315,29 @@ export class AppleMusicService {
             title
         ];
 
+        // Try the suggestions endpoint first (lower rate limits).
+        // It returns up to 10 pre-hydrated songs per query, so we accumulate across
+        // queries and short-circuit as soon as a confident match is found.
+        // Queries are reversed (simplest first) because the suggestions endpoint
+        // consistently returns better results for shorter terms.
         let candidates = [];
+        try {
+            for (const query of [...searchQueries].reverse()) {
+                logger.debug(`Searching Apple Music suggestions with query: "${query}"`);
+                const songs = await this.searchSongBySuggestions(query, storefront);
+                candidates.push(...songs);
+                const bestMatch = SimilarityUtils.findBestSongMatch(candidates, title, artist, album, duration);
+                if (bestMatch) return bestMatch.candidate;
+            }
+        } catch (error) {
+            logger.warn('Apple Music suggestions search failed, falling back to standard search:', error);
+            candidates = [];
+        }
+
+        // Fall back to the standard search endpoint if suggestions yielded nothing.
+        logger.debug('Suggestions search exhausted, falling back to standard search...');
         for (const query of searchQueries) {
-            console.debug(`Searching Apple Music with query: "${query}"`);
+            logger.debug(`Searching Apple Music (standard) with query: "${query}"`);
             const searchData = await this.searchSong(query, storefront);
             candidates.push(...(searchData.results?.songs?.data || []));
             const bestMatch = SimilarityUtils.findBestSongMatch(candidates, title, artist, album, duration);
@@ -266,13 +346,13 @@ export class AppleMusicService {
         return null;
     }
 
-    static async _checkCache(title, artist, album, duration, isrc, platformId, songs, gd, forceReload, sources) {
+    static async _checkCache(title, artist, album, duration, isrc, platformId, gd, forceReload, sources) {
         if (forceReload) return null;
 
         const handleCachedContent = async (ttmlContent, cacheType, file) => {
             const converted = convertTTMLtoJSON(ttmlContent);
             if (!converted.lyrics || converted.lyrics.length === 0) {
-                console.warn(`Cached lyrics from ${cacheType} are empty, refetching.`);
+                logger.warn(`Cached lyrics from ${cacheType} are empty, refetching.`);
                 return null;
             }
             converted.metadata = converted.metadata || {};
@@ -300,7 +380,7 @@ export class AppleMusicService {
                 const ttmlContent = await gd.fetchFile(existingFile.id);
                 if (ttmlContent) return await handleCachedContent(ttmlContent, 'GDrive', existingFile);
             } catch (error) {
-                console.warn('Failed to fetch from GDrive cache:', error);
+                logger.warn('Failed to fetch from GDrive cache:', error);
             }
         }
         return null;

@@ -5,6 +5,7 @@ import { SimilarityUtils } from "../utils/similarity.util.js";
 import { FileUtils } from "../utils/file.util.js";
 import { convertMusixmatchToJSON } from "../parsers/musixmatch.parser.js";
 import { musixmatchAccountManager } from "../config.js";
+import { logger } from '../utils/logger.util.js';
 
 const WEB_BASE_URL = 'https://apic-desktop.musixmatch.com/ws/1.1';
 const ANDROID_BASE_URL = 'https://apic.musixmatch.com/ws/1.1/';
@@ -25,11 +26,16 @@ export class MusixmatchService {
 
     // --- Public API ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync = false) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync = false, cacheOnly = false) {
         const initialCache = await this._checkCache(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, requireWordSync);
         if (initialCache) {
-            console.debug('Musixmatch lyrics found in cache (initial check).');
+            logger.debug('Musixmatch lyrics found in cache (initial check).');
             return initialCache;
+        }
+
+        if (cacheOnly) {
+            logger.debug('MusixmatchService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+            return null;
         }
 
         const currentAccount = musixmatchAccountManager.getCurrentAccount();
@@ -40,16 +46,16 @@ export class MusixmatchService {
         try {
             return await this._fetchLyricsWithAccount(currentAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync);
         } catch (error) {
-            console.warn(`Fetch failed with ${currentAccount.AUTH_TYPE} API:`, error.message);
+            logger.warn(`Fetch failed with ${currentAccount.AUTH_TYPE} API:`, error.message);
 
             const switched = musixmatchAccountManager.switchToNextAccount();
             if (switched) {
-                console.log('Trying next account...');
+                logger.log('Trying next account...');
                 const nextAccount = musixmatchAccountManager.getCurrentAccount();
                 try {
                     return await this._fetchLyricsWithAccount(nextAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync);
                 } catch (retryError) {
-                    console.warn(`Fetch failed with ${nextAccount.AUTH_TYPE} API:`, retryError.message);
+                    logger.warn(`Fetch failed with ${nextAccount.AUTH_TYPE} API:`, retryError.message);
                 }
             }
 
@@ -62,16 +68,16 @@ export class MusixmatchService {
         // Prioritize ISRC search when available
         let matchedTrack = null;
         if (songISRC) {
-            console.debug(`Searching Musixmatch by ISRC: ${songISRC}`);
+            logger.debug(`Searching Musixmatch by ISRC: ${songISRC}`);
             try {
                 const isrcResult = await this.advancedTrackSearch({ q_track_isrc: songISRC }, account, env);
                 const track = isrcResult?.message?.body?.track;
                 if (track && track.track_id) {
-                    console.debug(`Musixmatch ISRC search found track: ${track.artist_name} - ${track.track_name}`);
+                    logger.debug(`Musixmatch ISRC search found track: ${track.artist_name} - ${track.track_name}`);
                     matchedTrack = track;
                 }
             } catch (error) {
-                console.warn('Musixmatch ISRC search failed:', error);
+                logger.warn('Musixmatch ISRC search failed:', error);
             }
         }
 
@@ -79,23 +85,23 @@ export class MusixmatchService {
         if (!matchedTrack) {
             const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
             if (isIdOnlySearch) {
-                console.debug('ISRC search found no match and no title/artist provided. Aborting Musixmatch search.');
+                logger.debug('ISRC search found no match and no title/artist provided. Aborting Musixmatch search.');
                 return null;
             }
             matchedTrack = await this._searchForBestMatch(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, account, env);
         }
         if (!matchedTrack) {
-            console.warn('No suitable track match found in Musixmatch.');
+            logger.warn('No suitable track match found in Musixmatch.');
             return null;
         }
 
         const { track_name, artist_name, album_name, track_length, track_isrc, track_id } = matchedTrack;
         const exactMetadata = { title: track_name, artist: artist_name, album: album_name, durationMs: track_length * 1000, isrc: track_isrc, platformId: track_id };
-        console.debug(`Selected match: ${artist_name} - ${track_name} (Album: ${album_name}, Duration: ${track_length}s, ISRC: ${track_isrc}, MusixmatchId: ${track_id})`);
+        logger.debug(`Selected match: ${artist_name} - ${track_name} (Album: ${album_name}, Duration: ${track_length}s, ISRC: ${track_isrc}, MusixmatchId: ${track_id})`);
 
         const postSearchCache = await this._checkCache(track_name, artist_name, album_name, track_length, track_isrc, track_id, gd, forceReload, requireWordSync);
         if (postSearchCache) {
-            console.debug('Musixmatch lyrics found in cache (post-search check).');
+            logger.debug('Musixmatch lyrics found in cache (post-search check).');
             return postSearchCache;
         }
 
@@ -105,12 +111,12 @@ export class MusixmatchService {
         const musixmatchData = { track: matchedTrack, ...lyricsResult };
         const convertedLyrics = convertMusixmatchToJSON(musixmatchData, requireWordSync);
         if (!convertedLyrics) {
-            console.warn('Failed to convert Musixmatch data to standard format.');
+            logger.warn('Failed to convert Musixmatch data to standard format.');
             return null;
         }
 
         if (requireWordSync && convertedLyrics.type !== "Word") {
-            console.warn('Richsync was required but not available for this track.');
+            logger.warn('Richsync was required but not available for this track.');
             return null;
         }
 
@@ -149,7 +155,7 @@ export class MusixmatchService {
                 songwriters = writerList.map(writer => writer.writer_name);
             }
         } catch (error) {
-            console.warn(`Failed to fetch advanced details for ${track.track_name}:`, error);
+            logger.warn(`Failed to fetch advanced details for ${track.track_name}:`, error);
         }
 
         const art = fullTrackDetails.album_coverart_100x100 || fullTrackDetails.album_coverart_350x350 || fullTrackDetails.album_coverart_500x500 || null;
@@ -334,7 +340,7 @@ export class MusixmatchService {
             const kvHandler = new DbHandler(env.LYRICSPLUS);
             await kvHandler.delete(ANDROID_TOKEN_KEY);
         } catch (error) {
-            console.warn('Could not delete Android token:', error.message);
+            logger.warn('Could not delete Android token:', error.message);
         }
     }
 
@@ -368,7 +374,7 @@ export class MusixmatchService {
                 expiryTime: expirationTime
             }, TOKEN_EXPIRY_SECONDS);
         } catch (err) {
-            console.warn('Failed to cache token:', err.message);
+            logger.warn('Failed to cache token:', err.message);
         }
 
         return { loginNeeded: true, token: newToken };
@@ -387,15 +393,15 @@ export class MusixmatchService {
 
             if (cachedTokenData?.token && cachedTokenData?.expiryTime > currentTime) {
                 state.currentToken = cachedTokenData.token;
-                console.log('Using cached Android token.');
+                logger.log('Using cached Android token.');
                 state.isLoggedIn = true;
                 return { loginNeeded: false, token: state.currentToken };
             }
         } catch (error) {
-            console.warn(`Could not read Android token: ${error.message}`);
+            logger.warn(`Could not read Android token: ${error.message}`);
         }
 
-        console.log('Fetching a new Android token...');
+        logger.log('Fetching a new Android token...');
         return await this._fetchAndroidToken(env);
     }
 
@@ -420,7 +426,7 @@ export class MusixmatchService {
             throw new Error(`Login failed with status ${header?.status_code}: ${header?.hint || 'Unknown error'}`);
         }
         state.isLoggedIn = true;
-        console.log('Android login successful.');
+        logger.log('Android login successful.');
     }
 
     static async _initializeAndroidClient(account, env, retryCount = 0) {
@@ -441,7 +447,7 @@ export class MusixmatchService {
             androidClientStates.set(key, state);
         }
 
-        console.log('Initializing Musixmatch Android client...');
+        logger.log('Initializing Musixmatch Android client...');
         try {
             const { loginNeeded, token } = await this._getAndroidToken(env, state);
             state.currentToken = token;
@@ -450,12 +456,12 @@ export class MusixmatchService {
                 await this._androidLogin(account, env, state);
             }
 
-            console.log('Android initialization successful. Logged in.');
+            logger.log('Android initialization successful. Logged in.');
             return state;
         } catch (error) {
-            console.error(`Android initialization failed: ${error.message}`);
+            logger.error(`Android initialization failed: ${error.message}`);
             if (error.message.includes('401') && retryCount < 3) {
-                console.log(`Received 401, attempting to refresh token and re-login (Attempt ${retryCount + 1})`);
+                logger.log(`Received 401, attempting to refresh token and re-login (Attempt ${retryCount + 1})`);
                 await this._clearAndroidToken(env, key);
                 return await this._initializeAndroidClient(account, env, retryCount + 1);
             }
@@ -468,7 +474,7 @@ export class MusixmatchService {
         let state = androidClientStates.get(key);
 
         if (!state || !state.isLoggedIn) {
-            console.warn('Not logged in. Attempting to initialize Android client...');
+            logger.warn('Not logged in. Attempting to initialize Android client...');
             state = await this._initializeAndroidClient(account, env);
         }
 
@@ -478,7 +484,7 @@ export class MusixmatchService {
         const responseStatusCode = response.data?.message?.header?.status_code;
 
         if (response.http_code === 401 || responseStatusCode === 401) {
-            console.log('Auth token expired or invalid (401). Refreshing token and re-logging in...');
+            logger.log('Auth token expired or invalid (401). Refreshing token and re-logging in...');
             await this._clearAndroidToken(env, key);
             state = await this._initializeAndroidClient(account, env);
 
@@ -539,7 +545,7 @@ export class MusixmatchService {
             await kvHandler.set(WEB_TOKEN_KEY, { token, expiryTime: Date.now() + 3600000 }, 3600);
             return token;
         } catch (error) {
-            console.error('Error getting user token:', error);
+            logger.error('Error getting user token:', error);
             throw error;
         }
     }
@@ -594,7 +600,7 @@ export class MusixmatchService {
                     }
                 }
             } catch (error) {
-                console.warn('Failed to process Musixmatch cache file:', error);
+                logger.warn('Failed to process Musixmatch cache file:', error);
             }
         }
         return null;
@@ -645,7 +651,7 @@ export class MusixmatchService {
                 return { lyrics: richLyrics, type: 'richsync' };
             }
         } catch (error) {
-            console.warn('Failed to fetch richsync lyrics:', error);
+            logger.warn('Failed to fetch richsync lyrics:', error);
         }
 
         if (!requireWordSync) {
@@ -655,7 +661,7 @@ export class MusixmatchService {
                     return { lyrics: subtitleLyrics, type: 'subtitle' };
                 }
             } catch (error) {
-                console.warn('Failed to fetch subtitle lyrics:', error);
+                logger.warn('Failed to fetch subtitle lyrics:', error);
             }
         }
 

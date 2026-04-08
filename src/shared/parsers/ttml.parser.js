@@ -371,52 +371,50 @@ export function convertJsonToTTML(jsonLyrics) {
   const extractTextAndSpace = (fullText) => {
     if (!fullText) return { pre: '', text: '', post: '' };
     const match = fullText.match(/^(\s*)([\s\S]*?)(\s*)$/);
-    return { 
-        pre: match[1] || '', 
-        text: match[2] || '', 
-        post: match[3] || '' 
-    };
+    return { pre: match[1] || '', text: match[2] || '', post: match[3] || '' };
   };
 
   const metadata = jsonLyrics.metadata || {};
-  const agents = {};
-  
-  if (metadata.agents) {
-    for (const [key, val] of Object.entries(metadata.agents)) {
-      agents[key] = { ...val };
-    }
-  }
+  const songPartsArray = metadata.songParts || [];
+  const isNewFormat = jsonLyrics.lyrics?.some(l => l.element?.songPartIndex != null);
 
+  const agents = {};
+  if (metadata.agents) {
+    for (const [key, val] of Object.entries(metadata.agents)) agents[key] = { ...val };
+  }
   if (jsonLyrics.lyrics) {
     const usedSingers = new Set(jsonLyrics.lyrics.map(l => l.element?.singer).filter(Boolean));
     for (const alias of usedSingers) {
       const existingId = Object.keys(agents).find(id => agents[id].alias === alias || id === alias);
-      
-      if (!existingId) {
-        agents[alias] = { type: 'person', name: '', alias: alias };
-      }
+      if (!existingId) agents[alias] = { type: 'person', name: '', alias };
     }
   }
 
   const findAgentId = (alias) => {
     if (!alias) return null;
-    const id = Object.keys(agents).find(key => agents[key].alias === alias || key === alias);
-    return id || alias;
+    return Object.keys(agents).find(key => agents[key].alias === alias || key === alias) || alias;
+  };
+
+  const resolveSongPart = (element) => {
+    if (element?.songPart) {
+      const p = element.songPart;
+      return p.charAt(0).toUpperCase() + p.slice(1);
+    }
+    if (element?.songPartIndex != null && songPartsArray[element.songPartIndex]) {
+      const p = songPartsArray[element.songPartIndex].name;
+      return p.charAt(0).toUpperCase() + p.slice(1);
+    }
+    return '';
   };
 
   const timingMode = jsonLyrics.type || "Word";
   const lang = metadata.language || "en";
-  
-  // basically TTML header hehehe
+
   let ttml = '<?xml version="1.0" encoding="UTF-8"?>';
   ttml += `<tt xmlns="http://www.w3.org/ns/ttml" xmlns:itunes="http://music.apple.com/lyric-ttml-internal" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:xml="http://www.w3.org/XML/1998/namespace" itunes:timing="${timingMode}" xml:lang="${lang}">`;
-
   ttml += '<head><metadata>';
-  if (metadata.title) {
-    ttml += `<ttm:title>${escapeHtml(metadata.title)}</ttm:title>`;
-  }
+  if (metadata.title) ttml += `<ttm:title>${escapeHtml(metadata.title)}</ttm:title>`;
 
-  // Agents
   for (const [id, agent] of Object.entries(agents)) {
     const type = agent.type || 'person';
     if (agent.name) {
@@ -426,61 +424,50 @@ export function convertJsonToTTML(jsonLyrics) {
     }
   }
 
-  // iTunes Metadata
   const leadingSilence = metadata.leadingSilence || "0.000";
   ttml += `<iTunesMetadata leadingSilence="${leadingSilence}">`;
-  
-  // Songwriters
   if (Array.isArray(metadata.songWriters) && metadata.songWriters.length > 0) {
     ttml += '<songwriters>';
-    metadata.songWriters.forEach(sw => {
-      ttml += `<songwriter>${escapeHtml(sw)}</songwriter>`;
-    });
+    metadata.songWriters.forEach(sw => { ttml += `<songwriter>${escapeHtml(sw)}</songwriter>`; });
     ttml += '</songwriters>';
   }
-  
   ttml += '</iTunesMetadata></metadata></head>';
 
-  // Construct Body
   let totalDur = metadata.totalDuration;
-  if (!totalDur && jsonLyrics.lyrics && jsonLyrics.lyrics.length > 0) {
+  if (!totalDur && jsonLyrics.lyrics?.length > 0) {
     const lastLine = jsonLyrics.lyrics[jsonLyrics.lyrics.length - 1];
     totalDur = formatTime(lastLine.time + lastLine.duration);
   } else if (!totalDur) {
     totalDur = "00:00.000";
   }
-  
+
   ttml += `<body dur="${totalDur}">`;
 
-  if (jsonLyrics.lyrics && jsonLyrics.lyrics.length > 0) {
+  if (jsonLyrics.lyrics?.length > 0) {
     let currentLines = [];
     let currentSongPart = null;
+    let currentSongPartIndex = null;
 
     const flushDiv = () => {
       if (currentLines.length === 0) return;
-
       const divStart = currentLines[0].time;
       const lastLine = currentLines[currentLines.length - 1];
       const divEnd = lastLine.time + lastLine.duration;
 
       ttml += `<div begin="${formatTime(divStart)}" end="${formatTime(divEnd)}"`;
-      if (currentSongPart) {
-        ttml += ` itunes:song-part="${escapeHtml(currentSongPart)}"`;
-      }
+      if (currentSongPart) ttml += ` itunes:song-part="${escapeHtml(currentSongPart)}"`;
       ttml += '>';
 
       for (const line of currentLines) {
         const agentId = findAgentId(line.element?.singer);
         const key = line.element?.key;
-
         ttml += `<p begin="${formatTime(line.time)}" end="${formatTime(line.time + line.duration)}"`;
         if (key) ttml += ` itunes:key="${key}"`;
         if (agentId) ttml += ` ttm:agent="${agentId}"`;
         ttml += '>';
 
-        if (timingMode === 'Word' && line.syllabus && line.syllabus.length > 0) {
+        if (timingMode === 'Word' && line.syllabus?.length > 0) {
           let bgBuffer = [];
-          
           const flushBg = () => {
             if (bgBuffer.length === 0) return;
             ttml += '<span ttm:role="x-bg">';
@@ -491,7 +478,6 @@ export function convertJsonToTTML(jsonLyrics) {
             ttml += '</span>';
             bgBuffer = [];
           };
-
           for (const syl of line.syllabus) {
             if (syl.isBackground) {
               bgBuffer.push(syl);
@@ -503,7 +489,6 @@ export function convertJsonToTTML(jsonLyrics) {
           }
           flushBg();
         } else {
-          // Line mode or Plain text
           ttml += escapeHtml(line.text);
         }
         ttml += '</p>';
@@ -512,18 +497,25 @@ export function convertJsonToTTML(jsonLyrics) {
     };
 
     for (const line of jsonLyrics.lyrics) {
-      const part = line.element?.songPart || '';
-      
-      // Initialize currentSongPart on first iteration
+      const songPart = resolveSongPart(line.element);
+      const songPartIndex = line.element?.songPartIndex ?? null;
+
       if (currentSongPart === null) {
-        currentSongPart = part;
+        currentSongPart = songPart;
+        currentSongPartIndex = songPartIndex;
       }
 
-      if (part !== currentSongPart && currentLines.length > 0) {
+      const shouldSplit = isNewFormat
+        ? songPartIndex !== currentSongPartIndex
+        : songPart !== currentSongPart;
+
+      if (shouldSplit && currentLines.length > 0) {
         flushDiv();
         currentLines = [];
-        currentSongPart = part;
+        currentSongPart = songPart;
+        currentSongPartIndex = songPartIndex;
       }
+
       currentLines.push(line);
     }
     flushDiv();

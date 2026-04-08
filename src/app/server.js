@@ -1,3 +1,4 @@
+import '../shared/utils/patch-caches.js';
 import app from './app.js';
 import { serve } from '@hono/node-server';
 import { KvEmulator } from '../shared/utils/kv.emulator.js';
@@ -6,7 +7,7 @@ import { KvEmulator } from '../shared/utils/kv.emulator.js';
 const SONGS_KV = new KvEmulator('SONGS_KV');
 const LYRICSPLUS = new KvEmulator('LYRICSPLUS');
 
-const port = 3000;
+const port = process.env.PORT || 3000;
 console.log(`Server is running on port ${port}`);
 
 serve({
