@@ -1,26 +1,23 @@
 import { SpotifyService } from "./spotify.service.js";
 import { AppleMusicService } from "./appleMusic.service.js";
-import { MusixmatchService } from "./musixmatch.service.js";
 import { logger } from '../utils/logger.util.js';
 
 export class SongCatalogService {
     /**
-     * Searches for songs across Apple Music, Spotify, and Musixmatch, then merges
+     * Searches for songs across Apple Music and Spotify, then merges
      * the results into a single, deduplicated list.
      *
-     * The process prioritizes results from Apple Music, then Spotify, then Musixmatch
+     * The process prioritizes results from Apple Music, then Spotify
      * during the merge. Songs are matched primarily by their ISRC, falling back to a
      * composite key of title, artist, and album.
      *
      * @param {string} query - The search query (e.g., song title and/or artist).
-     * @param {object} env - Environment variables, required for Musixmatch authentication.
      * @returns {Promise<Array<object>>} A promise that resolves to an array of normalized song metadata.
      */
     static async search(query, env) {
         const results = await Promise.allSettled([
             this._searchAppleMusic(query),
-            this._searchSpotify(query),
-            this._searchMusixmatch(query, env)
+            this._searchSpotify(query)
         ]);
 
         const allResults = results.flatMap(result => {
@@ -43,7 +40,7 @@ export class SongCatalogService {
      */
     static _mergeSearchResults(results) {
         const finalResultsMap = new Map();
-        const sourceOrder = { 'Apple Music': 1, 'Spotify': 2, 'Musixmatch': 3 };
+        const sourceOrder = { 'Apple Music': 1, 'Spotify': 2 };
 
         const sortedResults = results.sort((a, b) => {
             const sourceA = a.availability[0];
@@ -106,21 +103,4 @@ export class SongCatalogService {
         }
     }
 
-    /**
-     * @private
-     * Searches Musixmatch and normalizes the results.
-     */
-    static async _searchMusixmatch(query, env) {
-        try {
-            const searchData = await MusixmatchService.searchTrack(query, null, env);
-            const tracksData = searchData.message?.body?.track_list || [];
-
-            return Promise.all(
-                tracksData.map(trackResult => MusixmatchService.normalizeMusixmatchSong(trackResult.track, null, env))
-            );
-        } catch (error) {
-            logger.error("Error searching Musixmatch:", error);
-            return [];
-        }
-    }
 }

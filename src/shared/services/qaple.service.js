@@ -1,6 +1,5 @@
 import { QQService } from "./qq.service.js";
 import { AppleMusicService } from "./appleMusic.service.js";
-import { MusixmatchService } from "./musixmatch.service.js";
 import { mergeAppleMetadataIntoWordSync } from "../utils/merge.util.js";
 import { logger } from '../utils/logger.util.js';
 
@@ -41,17 +40,6 @@ export class QapleService {
         if (appleResult && appleResult.success && appleResult.data && appleResult.data.lyrics) {
             lineSyncResult = appleResult.data;
             lineSyncSource = 'Apple';
-        } else {
-            logger.debug('QapleService: Apple Music fetch failed, falling back to Musixmatch line-sync...');
-            const mxmResult = await withTimeout(
-                MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, env, false, true),
-                10000,
-                'Musixmatch'
-            );
-            if (mxmResult && mxmResult.success && mxmResult.data && mxmResult.data.lyrics) {
-                lineSyncResult = mxmResult.data;
-                lineSyncSource = 'Musixmatch';
-            }
         }
 
         if (!lineSyncResult) {

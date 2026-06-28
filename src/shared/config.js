@@ -34,17 +34,6 @@ export const SPOTIFY = {
     ]
 };
 
-export const MUSIXMATCH = {
-    ACCOUNTS: [
-        {
-            NAMEID: "Musixmatch-Guest",
-            AUTH_TYPE: "web",
-            USER_AGENT: process.env.MUSIXMATCH_USER_AGENT || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
-            COOKIE: process.env.MUSIXMATCH_COOKIE || 'AWSELB=55578B011601B1EF8BC274C33F9043CA947F99DCFF0A80541772015CA2B39C35C0F9E1C932D31725A7310BCAEB0C37431E024E2B45320B7F2C84490C2C97351FDE34690157'
-        }
-    ]
-};
-
 export class AccountManager {
     constructor(accounts) {
         this.accounts = accounts;
@@ -76,4 +65,3 @@ export class AccountManager {
 
 export const appleMusicAccountManager = new AccountManager(APPLE_MUSIC.ACCOUNTS);
 export const spotifyAccountManager = new AccountManager(SPOTIFY.ACCOUNTS);
-export const musixmatchAccountManager = new AccountManager(MUSIXMATCH.ACCOUNTS);

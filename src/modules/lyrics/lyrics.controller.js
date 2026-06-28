@@ -1,5 +1,4 @@
 import { AppleMusicService } from "../../shared/services/appleMusic.service.js";
-import { MusixmatchService } from "../../shared/services/musixmatch.service.js";
 import { SpotifyService } from "../../shared/services/spotify.service.js";
 import { QQService } from "../../shared/services/qq.service.js";
 import { QapleService } from "../../shared/services/qaple.service.js";
@@ -65,9 +64,9 @@ export async function handleSongLyrics(
     const isIdOnlySearch = (!songTitle || !songArtist) && (songISRC || songPlatformId);
 
     if (isIdOnlySearch) {
-        sources = ['apple', 'qaple', 'qq', 'musixmatch'];
+        sources = ['apple', 'qaple', 'qq'];
     } else {
-        sources = preferredSources.length > 0 ? preferredSources : ['apple', 'qaple', 'qq', 'musixmatch-word', 'musixmatch'];
+        sources = preferredSources.length > 0 ? preferredSources : ['apple', 'qaple', 'qq'];
     }
 
     const getSyncPriority = (result) => {
@@ -77,7 +76,7 @@ export async function handleSongLyrics(
         const data = result.data;
         const syncType = data.type ? data.type.toUpperCase() : '';
 
-        if (sourceType.includes('musixmatch') || sourceType.includes('spotify') || sourceType.includes('qq')) {
+        if (sourceType.includes('spotify') || sourceType.includes('qq')) {
             if (syncType === 'WORD' || syncType === 'SYLLABLE') return 3;
             if (syncType === 'LINE') return 2;
             return 1;
@@ -97,14 +96,9 @@ export async function handleSongLyrics(
             case 'qaple':
                 logger.debug(`Attempting Qaple Fetch`);
                 return QapleService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, env, sources);
-            case 'musixmatch-word':
-                logger.debug(`Attempting MusixMatch (Word Sync) Fetch`);
-                return MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, env, true);
-            case 'musixmatch':
-                logger.debug(`Attempting MusixMatch (Line/Any Sync) Fetch`);
-                return MusixmatchService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId, env, false);
+
             case 'spotify':
-                logger.debug(`Attempting Spotify (as MusixMatch alt) Fetch`);
+                logger.debug(`Attempting Spotify Fetch`);
                 return SpotifyService.fetchLyrics(songTitle, songArtist, songAlbum, songDuration, songISRC, songPlatformId);
             case 'qq':
                 logger.debug(`Attempting QQ Fetch`);
@@ -139,7 +133,7 @@ export async function handleSongLyrics(
 
         if (bestPriority === 2) {
             logger.debug(`Found line sync from first two sources, checking for word sync in remaining sources`);
-            const remainingSources = sources.slice(2).filter(s => s !== 'musixmatch' && s !== 'spotify');
+            const remainingSources = sources.slice(2).filter(s => s !== 'spotify');
 
             if (remainingSources.length > 0) {
                 const { winner: remainingWinner, all: remainingResults } = await raceWithEarlyExit(

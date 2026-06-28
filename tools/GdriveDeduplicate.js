@@ -180,7 +180,7 @@ async function main() {
   const folders = [
     { folderId: GDRIVE.CACHED_SPOTIFY,    name: "Spotify"     },
     { folderId: GDRIVE.CACHED_TTML,       name: "Apple Music" },
-    { folderId: GDRIVE.CACHED_MUSIXMATCH, name: "Musixmatch"  },
+
     { folderId: GDRIVE.CACHED_QQ,         name: "QQ Music"    },
   ];
 

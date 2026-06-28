@@ -141,7 +141,7 @@ export async function handleRawLyricsRequest(c) {
         contentType = 'application/xml';
     } else if (rawSource === 'qq') {
         contentType = 'application/xml';
-    } else if (rawSource === 'musixmatch' || rawSource === 'spotify') {
+    } else if (rawSource === 'spotify') {
         contentType = 'application/json';
         if (typeof body !== 'string') {
             body = JSON.stringify(body);
