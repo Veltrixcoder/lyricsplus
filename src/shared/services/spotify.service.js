@@ -1,5 +1,4 @@
 import { SPOTIFY } from "../config.js";
-import { FileUtils } from "../utils/file.util.js";
 import { SimilarityUtils } from "../utils/similarity.util.js";
 import { spotifyAccountManager } from "../config.js";
 import { convertSpotifyToJSON } from "../parsers/spotify.parser.js";
@@ -32,7 +31,7 @@ export class SpotifyService {
 
     // --- Public API Methods ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, cacheOnly = false) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, cacheOnly = false) {
         let songTitle = originalSongTitle;
         let songArtist = originalSongArtist;
         let songAlbum = originalSongAlbum;
@@ -41,46 +40,8 @@ export class SpotifyService {
         let platformId = songPlatformId;
 
         try {
-            const checkCache = async (title, artist, album, duration, isrc, platformId) => {
-                let existingSpotifyFile;
-                const isIdOnlySearch = (!title || !artist) && (isrc || platformId);
-
-                if (isIdOnlySearch) {
-                    existingSpotifyFile = await FileUtils.findExactSpByIds(gd, isrc, platformId);
-                } else {
-                    existingSpotifyFile = await FileUtils.findExistingSp(gd, title, artist, album, duration, isrc, platformId);
-                }
-
-                if (!forceReload && existingSpotifyFile) {
-                    try {
-                        const jsonContent = await gd.fetchFile(existingSpotifyFile.id);
-                        if (jsonContent) {
-                            const parsed = JSON.parse(jsonContent);
-                            const converted = convertSpotifyToJSON(parsed);
-                            converted.cached = 'GDrive';
-                            return {
-                                success: true,
-                                data: converted,
-                                source: 'Spotify',
-                                rawData: parsed,
-                                existingFile: existingSpotifyFile
-                            };
-                        }
-                    } catch (error) {
-                        logger.warn('Failed to fetch existing Spotify file from GDrive, will refetch.', error);
-                    }
-                }
-                return null;
-            };
-
-            const initialCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
-            if (initialCacheResult) {
-                logger.debug('Spotify lyrics found in cache (initial check).');
-                return initialCacheResult;
-            }
-
             if (cacheOnly) {
-                logger.debug('SpotifyService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+                logger.debug('SpotifyService: cacheOnly is true and cache is disabled. Skipping remote fetch.');
                 return null;
             }
 
@@ -99,22 +60,29 @@ export class SpotifyService {
                         logger.debug(`Spotify ISRC search found ${spotifyTracks.length} result(s) for ISRC: ${songISRC}`);
                     }
                 } catch (error) {
-                    logger.warn('Spotify ISRC search failed:', error);
+                    logger.warn(`Spotify search by ISRC failed:`, error);
                 }
             }
 
-            // Fall back to title/artist search if ISRC didn't find anything
+            // Fall back to title/artist search if ISRC query returned no results
             if (!spotifyTracks) {
                 const isIdOnlySearch = (!originalSongTitle || !originalSongArtist) && (songISRC || songPlatformId);
                 if (isIdOnlySearch) {
                     logger.debug('ISRC search found no match and no title/artist provided. Aborting Spotify search.');
                     return null;
                 }
-                spotifyTracks = await this.searchSpotifySong(originalSongTitle, originalSongArtist);
+
+                const query = [originalSongTitle, originalSongArtist].filter(Boolean).join(' ');
+                logger.debug(`Searching Spotify with query: ${query}`);
+                const response = await this.makeSpotifyRequest(
+                    `${SPOTIFY.BASE_URL}/search?q=${encodeURIComponent(query)}&type=track&limit=10`, {}
+                );
+                const data = await response.json();
+                spotifyTracks = data.tracks?.items;
             }
 
             if (!spotifyTracks || spotifyTracks.length === 0) {
-                logger.warn('No Spotify tracks found for search query.');
+                logger.warn('No tracks found in Spotify search.');
                 return null;
             }
 
@@ -156,11 +124,7 @@ export class SpotifyService {
 
             logger.debug(`Selected match: ${songArtist} - ${songTitle} (Album: ${songAlbum}, Duration: ${songDuration}s, ISRC: ${isrc}, PlatformId: ${platformId})`);
 
-            const postSearchCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
-            if (postSearchCacheResult) {
-                logger.debug('Spotify lyrics found in cache (post-search check).');
-                return postSearchCacheResult;
-            }
+
 
             const spotifyLyrics = await this.fetchSpotifyLyrics(spotifyTrack.id);
             if (!spotifyLyrics?.lyrics) {

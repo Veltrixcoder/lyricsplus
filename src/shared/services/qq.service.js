@@ -1,7 +1,6 @@
 import { qrc_decrypt } from '../utils/tripledes.util.js';
 import { convertQQToJSON } from '../parsers/qq.parser.js';
 import { fetchWithTimeout } from '../utils/timeout.util.js';
-import { FileUtils } from '../utils/file.util.js';
 import { SimilarityUtils } from '../utils/similarity.util.js';
 import crypto from 'crypto';
 import { logger } from '../utils/logger.util.js';
@@ -15,7 +14,7 @@ export class QQService {
 
     // --- Public API ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, cacheOnly = false) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, env, cacheOnly = false) {
         let songTitle = originalSongTitle;
         let songArtist = originalSongArtist;
         let songAlbum = originalSongAlbum;
@@ -24,52 +23,8 @@ export class QQService {
         let platformId = songPlatformId;
 
         try {
-            const checkCache = async (title, artist, album, duration, isrc, platformId) => {
-                logger.debug('QQService: Checking cache for QQ lyrics...');
-                let existingFile;
-                const isIdOnlySearch = (!title || !artist) && (isrc || platformId);
-
-                if (isIdOnlySearch) {
-                    existingFile = await FileUtils.findExactQqByIds(gd, isrc, platformId);
-                } else {
-                    existingFile = await FileUtils.findExistingQq(gd, title, artist, album, duration, isrc, platformId);
-                }
-
-                if (!forceReload && existingFile) {
-                    try {
-                        const content = await gd.fetchFile(existingFile.id);
-                        if (content) {
-                            const exactMetadata = {
-                                title: title, artist: artist, album: album, durationMs: duration ? duration * 1000 : null, isrc: isrc, platformId: platformId
-                            };
-                            const converted = convertQQToJSON(content, exactMetadata);
-                            if (converted) {
-                                converted.cached = 'GDrive';
-                                return {
-                                    success: true,
-                                    data: converted,
-                                    source: 'QQ',
-                                    rawData: content,
-                                    existingFile: existingFile
-                                };
-                            }
-                        }
-                    } catch (error) {
-                        logger.warn('Failed to fetch existing QQ file from GDrive, will refetch.', error);
-                    }
-                }
-                logger.debug('QQ lyrics not found in cache (initial check).');
-                return null;
-            };
-
-            const initialCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
-            if (initialCacheResult) {
-                logger.debug('QQ lyrics found in cache (initial check).');
-                return initialCacheResult;
-            }
-
             if (cacheOnly) {
-                logger.debug('QQService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+                logger.debug('QQService: cacheOnly is true and cache is disabled. Skipping remote fetch.');
                 return null;
             }
 
@@ -143,12 +98,6 @@ export class QQService {
                 isrc: null,
                 platformId: platformId
             };
-
-            const postSearchCacheResult = await checkCache(songTitle, songArtist, songAlbum, songDuration, isrc, platformId);
-            if (postSearchCacheResult) {
-                logger.debug('QQ lyrics found in cache (post-search check).');
-                return postSearchCacheResult;
-            }
 
             // Step 2: Fetch the lyrics for the song
             const lyricParams = {

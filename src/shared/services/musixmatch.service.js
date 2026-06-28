@@ -1,8 +1,6 @@
 import crypto from "crypto";
 import { v4 as uuidv4 } from 'uuid';
-import { DbHandler } from "../utils/db.util.js";
 import { SimilarityUtils } from "../utils/similarity.util.js";
-import { FileUtils } from "../utils/file.util.js";
 import { convertMusixmatchToJSON } from "../parsers/musixmatch.parser.js";
 import { musixmatchAccountManager } from "../config.js";
 import { logger } from '../utils/logger.util.js';
@@ -16,6 +14,10 @@ const ANDROID_USER_AGENT = 'Dalvik/2.1.0 (Linux; U; Android 16; Pixel 8 Pro Buil
 const SIGNING_KEY = "IEJ5E8XFaHQvIQNfs7IC";
 const TOKEN_EXPIRY_SECONDS = 600;
 
+// In-memory Web token cache
+let cachedWebToken = null;
+let cachedWebTokenExpiry = 0;
+
 // Android implementation are by paxsenix, thank you
 // Device spoofed as Google Pixel 8 Pro, A16 QPR2 Beta
 
@@ -26,15 +28,9 @@ export class MusixmatchService {
 
     // --- Public API ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync = false, cacheOnly = false) {
-        const initialCache = await this._checkCache(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, requireWordSync);
-        if (initialCache) {
-            logger.debug('Musixmatch lyrics found in cache (initial check).');
-            return initialCache;
-        }
-
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, env, requireWordSync = false, cacheOnly = false) {
         if (cacheOnly) {
-            logger.debug('MusixmatchService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+            logger.debug('MusixmatchService: cacheOnly is true and cache is disabled. Skipping remote fetch.');
             return null;
         }
 
@@ -44,7 +40,7 @@ export class MusixmatchService {
         }
 
         try {
-            return await this._fetchLyricsWithAccount(currentAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync);
+            return await this._fetchLyricsWithAccount(currentAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, env, requireWordSync);
         } catch (error) {
             logger.warn(`Fetch failed with ${currentAccount.AUTH_TYPE} API:`, error.message);
 
@@ -53,7 +49,7 @@ export class MusixmatchService {
                 logger.log('Trying next account...');
                 const nextAccount = musixmatchAccountManager.getCurrentAccount();
                 try {
-                    return await this._fetchLyricsWithAccount(nextAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync);
+                    return await this._fetchLyricsWithAccount(nextAccount, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, env, requireWordSync);
                 } catch (retryError) {
                     logger.warn(`Fetch failed with ${nextAccount.AUTH_TYPE} API:`, retryError.message);
                 }
@@ -63,7 +59,7 @@ export class MusixmatchService {
         }
     }
 
-    static async _fetchLyricsWithAccount(account, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, env, requireWordSync) {
+    static async _fetchLyricsWithAccount(account, originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, env, requireWordSync) {
 
         // Prioritize ISRC search when available
         let matchedTrack = null;
@@ -99,11 +95,7 @@ export class MusixmatchService {
         const exactMetadata = { title: track_name, artist: artist_name, album: album_name, durationMs: track_length * 1000, isrc: track_isrc, platformId: track_id };
         logger.debug(`Selected match: ${artist_name} - ${track_name} (Album: ${album_name}, Duration: ${track_length}s, ISRC: ${track_isrc}, MusixmatchId: ${track_id})`);
 
-        const postSearchCache = await this._checkCache(track_name, artist_name, album_name, track_length, track_isrc, track_id, gd, forceReload, requireWordSync);
-        if (postSearchCache) {
-            logger.debug('Musixmatch lyrics found in cache (post-search check).');
-            return postSearchCache;
-        }
+
 
         const lyricsResult = await this._fetchLyricsFromApi(matchedTrack.track_id, account, env, requireWordSync);
         if (!lyricsResult) return null;
@@ -336,12 +328,6 @@ export class MusixmatchService {
             state.currentToken = null;
             state.isLoggedIn = false;
         }
-        try {
-            const kvHandler = new DbHandler(env.LYRICSPLUS);
-            await kvHandler.delete(ANDROID_TOKEN_KEY);
-        } catch (error) {
-            logger.warn('Could not delete Android token:', error.message);
-        }
     }
 
     static async _fetchAndroidToken(env) {
@@ -365,18 +351,6 @@ export class MusixmatchService {
             throw new Error(`No user token found in response`);
         }
 
-        const expirationTime = Date.now() + (TOKEN_EXPIRY_SECONDS * 1000);
-
-        try {
-            const kvHandler = new DbHandler(env.LYRICSPLUS);
-            await kvHandler.set(ANDROID_TOKEN_KEY, {
-                token: newToken,
-                expiryTime: expirationTime
-            }, TOKEN_EXPIRY_SECONDS);
-        } catch (err) {
-            logger.warn('Failed to cache token:', err.message);
-        }
-
         return { loginNeeded: true, token: newToken };
     }
 
@@ -384,21 +358,6 @@ export class MusixmatchService {
         if (state.currentToken) {
             state.isLoggedIn = true;
             return { loginNeeded: false, token: state.currentToken };
-        }
-
-        try {
-            const kvHandler = new DbHandler(env.LYRICSPLUS);
-            const cachedTokenData = await kvHandler.get(ANDROID_TOKEN_KEY);
-            const currentTime = Date.now();
-
-            if (cachedTokenData?.token && cachedTokenData?.expiryTime > currentTime) {
-                state.currentToken = cachedTokenData.token;
-                logger.log('Using cached Android token.');
-                state.isLoggedIn = true;
-                return { loginNeeded: false, token: state.currentToken };
-            }
-        } catch (error) {
-            logger.warn(`Could not read Android token: ${error.message}`);
         }
 
         logger.log('Fetching a new Android token...');
@@ -531,9 +490,9 @@ export class MusixmatchService {
 
     static async getUserToken(env) {
         try {
-            const kvHandler = new DbHandler(env.LYRICSPLUS);
-            const storedToken = await kvHandler.get(WEB_TOKEN_KEY);
-            if (storedToken?.expiryTime > Date.now()) return storedToken.token;
+            if (cachedWebToken && cachedWebTokenExpiry > Date.now()) {
+                return cachedWebToken;
+            }
 
             const currentAccount = musixmatchAccountManager.getCurrentAccount();
             if (!currentAccount) throw new Error('No Musixmatch account available.');
@@ -542,7 +501,8 @@ export class MusixmatchService {
             const token = data.message?.body?.user_token;
             if (!token || token.includes('UpgradeOnly')) throw new Error('Invalid token received from Musixmatch.');
 
-            await kvHandler.set(WEB_TOKEN_KEY, { token, expiryTime: Date.now() + 3600000 }, 3600);
+            cachedWebToken = token;
+            cachedWebTokenExpiry = Date.now() + 3600000;
             return token;
         } catch (error) {
             logger.error('Error getting user token:', error);
@@ -576,35 +536,7 @@ export class MusixmatchService {
 
     // --- Shared Internal Helpers ---
 
-    static async _checkCache(title, artist, album, duration, isrc, platformId, gd, forceReload, requireWordSync) {
-        if (forceReload) return null;
 
-        let file;
-        const isIdOnlySearch = (!title || !artist) && (isrc || platformId);
-
-        if (isIdOnlySearch) {
-            file = await FileUtils.findExactMusixmatchByIds(gd, isrc, platformId);
-        } else {
-            file = await FileUtils.findExistingMusixmatch(gd, title, artist, album, duration, isrc, platformId);
-        }
-
-        if (file) {
-            try {
-                const content = await gd.fetchFile(file.id);
-                if (content) {
-                    const parsed = JSON.parse(content);
-                    const converted = convertMusixmatchToJSON(parsed, requireWordSync);
-                    if (converted && (!requireWordSync || converted.type === "Word")) {
-                        converted.cached = 'GDrive';
-                        return { success: true, data: converted, source: 'Musixmatch', rawData: parsed, existingFile: file };
-                    }
-                }
-            } catch (error) {
-                logger.warn('Failed to process Musixmatch cache file:', error);
-            }
-        }
-        return null;
-    }
 
     static async _searchForBestMatch(title, artist, album, duration, songISRC, account, env) {
         const queries = [

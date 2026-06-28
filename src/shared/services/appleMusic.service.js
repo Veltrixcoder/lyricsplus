@@ -1,8 +1,6 @@
-import { APPLE_MUSIC, GDRIVE, appleMusicAccountManager } from "../config.js";
+import { APPLE_MUSIC, appleMusicAccountManager } from "../config.js";
 import { convertTTMLtoJSON } from "../parsers/ttml.parser.js";
 import { SimilarityUtils } from "../utils/similarity.util.js";
-import { FileUtils } from "../utils/file.util.js";
-import { LyricsPlusService } from "./lyricsPlus.service.js";
 import { logger } from '../utils/logger.util.js';
 
 const CACHE = { storefront: null, authToken: null };
@@ -13,20 +11,14 @@ export class AppleMusicService {
 
     // --- Public API ---
 
-    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, sources, cacheOnly = false) {
+    static async fetchLyrics(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, sources, cacheOnly = false) {
         try {
-            const initialCacheResult = await this._checkCache(originalSongTitle, originalSongArtist, originalSongAlbum, originalSongDuration, songISRC, songPlatformId, gd, forceReload, sources);
-            if (initialCacheResult) {
-                logger.debug('Apple Music lyrics found in cache (initial check).');
-                return initialCacheResult;
-            }
-
             if (cacheOnly) {
-                logger.debug('AppleMusicService: cacheOnly is true and no cache hit. Skipping remote fetch.');
+                logger.debug('AppleMusicService: cacheOnly is true and cache is disabled. Skipping remote fetch.');
                 return null;
             }
 
-            logger.debug('No cached lyrics found, searching Apple Music...');
+            logger.debug('Searching Apple Music...');
 
             // Prioritize ISRC search when available
             let bestMatch = null;
@@ -54,12 +46,6 @@ export class AppleMusicService {
             const appleMusicId = bestMatch.id;
             const exactMetadata = { title: name, artist: artistName, album: albumName, durationMs: durationInMillis, isrc: isrc, platformId: appleMusicId };
             logger.debug(`Selected match: ${artistName} - ${name} (Album: ${albumName}, Duration: ${durationInMillis / 1000}s, ISRC: ${isrc}, AppleMusicId: ${appleMusicId})`);
-
-            const postSearchCacheResult = await this._checkCache(name, artistName, albumName, durationInMillis / 1000, isrc, appleMusicId, gd, forceReload, sources);
-            if (postSearchCacheResult) {
-                logger.debug('Apple Music lyrics found in cache (post-search check).');
-                return postSearchCacheResult;
-            }
 
             if (bestMatch.attributes?.hasLyrics === false) {
                 logger.debug(`Apple Music song has no lyrics (hasLyrics=false): ${artistName} - ${name}`);
@@ -342,46 +328,6 @@ export class AppleMusicService {
             candidates.push(...(searchData.results?.songs?.data || []));
             const bestMatch = SimilarityUtils.findBestSongMatch(candidates, title, artist, album, duration);
             if (bestMatch) return bestMatch.candidate;
-        }
-        return null;
-    }
-
-    static async _checkCache(title, artist, album, duration, isrc, platformId, gd, forceReload, sources) {
-        if (forceReload) return null;
-
-        const handleCachedContent = async (ttmlContent, cacheType, file) => {
-            const converted = convertTTMLtoJSON(ttmlContent);
-            if (!converted.lyrics || converted.lyrics.length === 0) {
-                logger.warn(`Cached lyrics from ${cacheType} are empty, refetching.`);
-                return null;
-            }
-            converted.metadata = converted.metadata || {};
-            converted.metadata.source = 'Apple';
-            converted.cached = cacheType;
-
-            if (sources.includes('lyricsplus') && !FileUtils.hasSyllableSync(converted)) {
-                const lpResult = await LyricsPlusService.fetchLyrics(title, artist, album, duration, isrc, platformId, gd);
-                if (lpResult?.success) return lpResult;
-            }
-            return { success: true, data: converted, source: 'apple', rawData: ttmlContent, existingFile: file };
-        };
-
-        let existingFile;
-        const isIdOnlySearch = (!title || !artist) && (isrc || platformId);
-
-        if (isIdOnlySearch) {
-            existingFile = await FileUtils.findExactTTMLByIds(gd, isrc, platformId);
-        } else {
-            existingFile = await FileUtils.findExistingTTML(gd, title, artist, album, duration, isrc, platformId);
-        }
-
-        if (existingFile) {
-            try {
-                const ttmlContent = await gd.fetchFile(existingFile.id);
-                if (ttmlContent) return await handleCachedContent(ttmlContent, 'GDrive', existingFile);
-            } catch (error) {
-                logger.warn('Failed to fetch from GDrive cache:', error);
-            }
         }
         return null;
     }

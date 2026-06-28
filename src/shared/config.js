@@ -1,24 +1,3 @@
-export const LYRICSPLUS = {
-    JWT_SECRET: process.env.JWT_SECRET || "lyricsplus-submit-opensource-yes-yes-yes",
-    ALLOW_SUBMISSIONS: false, //default USERTML_JSON are locked to official apis, set to true to allow crowdsourced submission
-};
-
-export const GDRIVE = {
-    CACHED_SPOTIFY: process.env.GDRIVE_CACHED_SPOTIFY || "-2D0LTCsP1VSD", //Spotify
-    CACHED_TTML: process.env.GDRIVE_CACHED_TTML || "", //Apple Music
-    USERTML_JSON: process.env.GDRIVE_USERTML_JSON || "1RFoNsI5wAsRjQSVDOMaotDmMZNIQOWnW", //Lyrics+
-    CACHED_MUSIXMATCH: process.env.GDRIVE_CACHED_MUSIXMATCH || "", //Musixmatch
-    API_URL: "https://www.googleapis.com/drive/v3/files/",
-    API_URL_UPDATE: "https://www.googleapis.com/upload/drive/v2/files/",
-};
-
-export const AUTH_KEY = {
-    //your gdrive tokem
-    CLIENT_ID: process.env.AUTH_KEY_CLIENT_ID || "",
-    CLIENT_SECRET: process.env.AUTH_KEY_CLIENT_SECRET || "",
-    REFRESH_TOKEN: process.env.AUTH_KEY_REFRESH_TOKEN || "",
-    ROOT: process.env.AUTH_KEY_ROOT || "",
-};
 
 export const APPLE_MUSIC = {
     BASE_URL: "https://amp-api.music.apple.com/v1",

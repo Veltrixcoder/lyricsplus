@@ -10,10 +10,7 @@ compatibility_date = "2024-11-12"
 [observability]
 enabled = true
 
-[[kv_namespaces]]
-binding = "LYRICSPLUS"
-id = "cbae51fb39f247c1845b96fe0c2f58aa"
-preview_id = "2b3a33b07f21484ba7b4a26222c7a2fc"
+
 
 [[unsafe.bindings]]
 name = "MY_RATE_LIMITER"
